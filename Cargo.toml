@@ -1,0 +1,14 @@
+[package]
+name = "pain-studio-mask"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bitflags = "2.9.4"
+colog = "1.3.0"
+color-eyre = "0.6.5"
+log = "0.4.27"
+static_init = "1.0.4"
