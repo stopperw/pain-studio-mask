@@ -8,6 +8,8 @@ use windows::{
     Win32::{Foundation::{HWND, LPARAM, WPARAM}, UI::WindowsAndMessaging::*},
 };
 
+use crate::info_write::{info_write, info_write_array};
+
 /// Returns [WtiInterface]
 pub const WTI_INTERFACE: u32 = 1;
 pub const WTI_STATUS: u32 = 2;
@@ -152,10 +154,10 @@ impl WtiInterface {
     }
 }
 
-const HWC_INTEGRATED: u32 = 0x0001;
-const HWC_TOUCH: u32 = 0x0002;
-const HWC_HARDPROX: u32 = 0x0004;
-const HWC_PHYSID_CURSORS: u32 = 0x0008;
+pub const HWC_INTEGRATED: u32 = 0x0001;
+pub const HWC_TOUCH: u32 = 0x0002;
+pub const HWC_HARDPROX: u32 = 0x0004;
+pub const HWC_PHYSID_CURSORS: u32 = 0x0008;
 
 pub const DEVICES_NAME_LEN: usize = 48;
 #[repr(C)]
@@ -599,4 +601,79 @@ impl Axis {
             resolution: 1,
         }
     }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+/// The PACKET data structure is a flexible structure that contains tablet event information. Each of its fields is optional.
+/// The structure consists of a concatenation of the data items selected in the lcPktData field of the context that generated the packet.
+/// The order of the data items is the same as the order of the corresponding set bits in the field.
+/// The pkButtons data item has different formats in absolute and relative modes, as determined by the PK_BUTTONS bit in the lcPktMode field of the context.
+/// This implementation just includes all the fields.
+pub struct Packet {
+    /// Specifies the context that generated the event.
+    pub context: usize,//*mut c_void,
+    /// Specifies various status and error conditions. These conditions can be combined by using the bitwise OR operator.
+    /// The pkStatus field can be any combination of the status values.
+    pub status: u32,
+    /// In absolute mode, specifies the system time at which the event was posted.
+    /// In relative mode, specifies the elapsed time in milliseconds since the last packet.
+    pub time: u32,
+    /// Specifies which of the included packet data items have changed since the previously posted event.
+    pub changed: u32,
+    /// Contains a serial number assigned to the packet by the context. Consecutive packets will have consecutive serial numbers.
+    pub serial: u32,
+    /// Specifies which cursor type generated the packet.
+    pub cursor: u32,
+    /// In absolute mode, is a DWORD containing the current button state.
+    /// In relative mode, is a DWORD whose low word contains a button number,
+    /// and whose high word contains one of the following codes (displayed with Value and Meaning):
+    /// [TBN_NONE]: No change in button state.
+	/// [TBN_UP]: Button was released.
+	/// [TBN_DOWN]: Button was pressed.
+    pub buttons: u32,
+    /// In absolute mode, each is a DWORD containing the scaled cursor location along the x, y, and z axes, respectively.
+    /// In relative mode, each is a LONG containing the scaled change in cursor position.
+    pub x: u32,
+    /// In absolute mode, each is a DWORD containing the scaled cursor location along the x, y, and z axes, respectively.
+    /// In relative mode, each is a LONG containing the scaled change in cursor position.
+    pub y: u32,
+    /// In absolute mode, each is a DWORD containing the scaled cursor location along the x, y, and z axes, respectively.
+    /// In relative mode, each is a LONG containing the scaled change in cursor position.
+    pub z: u32,
+    /// In absolute mode, is a UINT containing the adjusted state of the normal pressure.
+    /// In relative mode, is an int containing the change in adjusted pressure state.
+    pub normal_pressure: u32,
+    /// In absolute mode, is a UINT containing the adjusted state of the tangential pressure.
+    /// In relative mode, is an int containing the change in adjusted pressure state.
+    pub tangential_pressure: u32,
+    /// Contains updated cursor orientation information. (see [Orientation])
+    pub orientation: Orientation,
+    /// Contains updated cursor rotation information. (see [Rotation])
+    pub rotation: Rotation,
+}
+
+#[derive(Debug, Default)]
+#[repr(C)]
+/// The ORIENTATION data structure specifies the orientation of the cursor with respect to the tablet.
+pub struct Orientation {
+    /// Specifies the clockwise rotation of the cursor about the z axis through a full circular range.
+    pub azimuth: i32,
+    /// Specifies the angle with the x-y plane through a signed, semicircular range.
+    /// Positive values specify an angle upward toward the positive z axis; negative values specify an angle downward toward the negative z axis.
+    pub altitude: i32,
+    /// Specifies the clockwise rotation of the cursor about its own major axis.
+    pub twist: i32,
+}
+
+#[derive(Debug, Default)]
+#[repr(C)]
+/// The ROTATION data structure specifies the Rotation of the cursor with respect to the tablet.
+pub struct Rotation {
+    /// Specifies the pitch of the cursor.
+    pub pitch: i32,
+    /// Specifies the roll of the cursor.
+    pub roll: i32,
+    /// Specifies the yaw of the cursor.
+    pub yaw: i32,
 }
