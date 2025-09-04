@@ -1,7 +1,5 @@
 use std::ffi::c_void;
 
-use log::debug;
-
 use crate::info_write::{info_write, info_write_array};
 
 /// Returns [WtiInterface]
@@ -215,8 +213,9 @@ pub struct WtiDevices {
 }
 impl WtiDevices {
     pub fn psm_default() -> Self {
-        let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
-        let mut wintabid = [0u8; DEVICES_NAME_LEN];
+        // let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
+        // let mut wintabid = [0u8; DEVICES_NAME_LEN];
+        let wintabid = [0u8; DEVICES_NAME_LEN];
         // for i in 0..DEVICES_NAME_LEN {
         //     if i % 2 == 1 {
         //         continue;
@@ -254,7 +253,6 @@ impl WtiDevices {
     }
 
     pub fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
-        debug!("9");
         match index {
             0 => info_write(self, lp_output),
             // TODO: replace with non-array version??
@@ -272,9 +270,9 @@ impl WtiDevices {
             11 => info_write(&self.z_margin, lp_output),
             12 => info_write(&self.device_x, lp_output),
             13 => info_write(&self.device_y, lp_output),
-            14 => 0, //info_write(&self.device_z, lp_output),
+            14 => info_write(&self.device_z, lp_output),
             15 => info_write(&self.normal_pressure, lp_output),
-            16 => 0, //info_write(&self.tangential_pressure, lp_output),
+            16 => info_write(&self.tangential_pressure, lp_output),
             17 => info_write(&self.orientation, lp_output),
             18 => info_write(&self.rotation, lp_output),
             19 => info_write_array(&self.pnp_id, lp_output, 8),
@@ -316,14 +314,14 @@ pub struct WtiCursors {
     /// The first UINT contains the release mark; the second contains the press mark.
     pub npbtnmarks: [u32; 2],
     /// Returns an array of UINTs describing the pressure response curve for normal pressure.
-    pub npresponse: [u32; 2],
+    pub npresponse: [u32; 256],
     /// Returns the physical button number of the button that is controlled by tangential pressure.
     pub tangential_button: u8,
     /// Returns an array of two UINTs, specifying the button marks for the tangential pressure button.
     /// The first UINT contains the release mark; the second contains the press mark.
     pub tpbtnmarks: [u32; 2],
     /// Returns an array of UINTs describing the pressure response curve for tangential pressure.
-    pub tpresponse: [u32; 2],
+    pub tpresponse: [u32; 256],
     /// Returns a manufacturer-specific physical identifier for the cursor.
     /// This value will distinguish the physical cursor from others on the same device.
     /// This physical identifier allows applications to bind functions to specific physical cursors,
@@ -343,8 +341,9 @@ pub struct WtiCursors {
 }
 impl WtiCursors {
     pub fn psm_default() -> Self {
-        let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
-        let mut wintabid = [0u8; CURSORS_NAME_LEN];
+        // let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
+        // let mut wintabid = [0u8; CURSORS_NAME_LEN];
+        let wintabid = [0u8; CURSORS_NAME_LEN];
         // for i in 0..CURSORS_NAME_LEN {
         //     if i % 2 == 1 {
         //         continue;
@@ -358,6 +357,11 @@ impl WtiCursors {
         // }
         // println!("{:#?}", wintabid);
 
+        let mut defr: [u32; 256] = [0u32; 256];
+        for i in 0..256 {
+            defr[i] = (i + 1) as u32;
+        }
+
         WtiCursors {
             name: wintabid,
             active: 0xFFFFFFFF,
@@ -368,12 +372,12 @@ impl WtiCursors {
             button_map: [0u8; 32],
             system_button_map: [0u8; 32],
             physical_button: 0,
-            npbtnmarks: [0, 0],
-            npresponse: [0, 0],
+            npbtnmarks: [0, 1],
+            npresponse: defr.clone(),//[0, 0],
             tangential_button: 0,
-            tpbtnmarks: [0, 0],
-            tpresponse: [0, 0],
-            physical_id: 69420,
+            tpbtnmarks: [0, 1],
+            tpresponse: defr,//[0, 0],
+            physical_id: 0,
             csr_mode: 0,
             minpktdata: 0,
             min_buttons: 0,
@@ -389,19 +393,19 @@ impl WtiCursors {
             3 => info_write(&self.packet_data, lp_output),
             4 => info_write(&self.buttons, lp_output),
             5 => info_write(&self.button_bits, lp_output),
-            6 => info_write(&self.button_names, lp_output),
-            7 => info_write(&self.button_map, lp_output),
-            8 => info_write(&self.system_button_map, lp_output),
+            6 => 0, //info_write(&self.button_names, lp_output),
+            7 => 0, //info_write(&self.button_map, lp_output),
+            8 => 0, //info_write(&self.system_button_map, lp_output),
             9 => info_write(&self.physical_button, lp_output),
-            10 => info_write(&self.npbtnmarks, lp_output),
+            10 => 0, //info_write(&self.npbtnmarks, lp_output),
             11 => 0, //info_write(&self.npresponse, lp_output),
             12 => info_write(&self.tangential_button, lp_output),
-            13 => info_write(&self.tpbtnmarks, lp_output),
+            13 => 0, //info_write(&self.tpbtnmarks, lp_output),
             14 => 0, //info_write(&self.tpresponse, lp_output),
             15 => info_write(&self.physical_id, lp_output),
             16 => info_write(&self.csr_mode, lp_output),
-            17 => info_write(&self.minpktdata, lp_output),
-            18 => info_write(&self.min_buttons, lp_output),
+            17 => 0, //info_write(&self.minpktdata, lp_output),
+            18 => 0, //info_write(&self.min_buttons, lp_output),
             19 => info_write(&self.capabilities, lp_output),
             _ => 0
         }
@@ -607,7 +611,7 @@ impl Axis {
             min: 0,
             max: 65535,
             units: TU_INCHES,
-            resolution: 1,
+            resolution: 0x03e8_0000, // 1000.0000
         }
     }
 }
@@ -641,14 +645,14 @@ pub struct Packet {
 	/// [TBN_UP]: Button was released.
 	/// [TBN_DOWN]: Button was pressed.
     pub buttons: u32,
-    /// In absolute mode, each is a DWORD containing the scaled cursor location along the x, y, and z axes, respectively.
-    /// In relative mode, each is a LONG containing the scaled change in cursor position.
+    /// In absolute mode, is a DWORD containing the scaled cursor location along the X axis.
+    /// In relative mode, is a LONG containing the scaled change in cursor position.
     pub x: u32,
-    /// In absolute mode, each is a DWORD containing the scaled cursor location along the x, y, and z axes, respectively.
-    /// In relative mode, each is a LONG containing the scaled change in cursor position.
+    /// In absolute mode, is a DWORD containing the scaled cursor location along the Y axis.
+    /// In relative mode, is a LONG containing the scaled change in cursor position.
     pub y: u32,
-    /// In absolute mode, each is a DWORD containing the scaled cursor location along the x, y, and z axes, respectively.
-    /// In relative mode, each is a LONG containing the scaled change in cursor position.
+    /// In absolute mode, is a DWORD containing the scaled cursor location along the Z axis.
+    /// In relative mode, is a LONG containing the scaled change in cursor position.
     pub z: u32,
     /// In absolute mode, is a UINT containing the adjusted state of the normal pressure.
     /// In relative mode, is an int containing the change in adjusted pressure state.
@@ -686,3 +690,31 @@ pub struct Rotation {
     /// Specifies the yaw of the cursor.
     pub yaw: i32,
 }
+
+pub enum WindowMessage {
+    Packet,
+    CtxOpen,
+    CtxClose,
+    CtxUpdate,
+    CtxOverlap,
+    Proximity,
+    InfoChange,
+    CsrChange,
+    PacketExt,
+}
+impl WindowMessage {
+    pub fn value(self, msg_base: u32) -> u32 {
+        match self {
+            WindowMessage::Packet => msg_base,
+            WindowMessage::CtxOpen => msg_base + 1,
+            WindowMessage::CtxClose => msg_base + 2,
+            WindowMessage::CtxUpdate => msg_base + 3,
+            WindowMessage::CtxOverlap => msg_base + 4,
+            WindowMessage::Proximity => msg_base + 5,
+            WindowMessage::InfoChange => msg_base + 6,
+            WindowMessage::CsrChange => msg_base + 7,
+            WindowMessage::PacketExt => msg_base + 8,
+        }
+    }
+}
+

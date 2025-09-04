@@ -10,10 +10,9 @@ use windows::{
 
 use crate::info_write::info_write;
 use crate::ffi::*;
-use crate::netcode::*;
+use psm_common::netcode::*;
 
 pub mod info_write;
-pub mod netcode;
 pub mod ffi;
 
 static STATE: LazyLock<Mutex<PSM>> = LazyLock::new(|| Mutex::new(PSM::default()));
@@ -119,6 +118,12 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                     }).ok();
                 }
             }
+            PSMPacketC2S::Proximity { value } => {
+                let mut state = STATE.lock().unwrap();
+                for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
+                    ctx.proximity(value).ok();
+                }
+            }
         }
     }
     // Ok(())
@@ -169,6 +174,8 @@ impl Context {
         self.serial += 1;
         packet.context = self.handle as u32;
         packet.serial = self.serial as u32;
+        packet.orientation.altitude = 900;
+        packet.time = self.serial as u32;
         // let packet = Packet {
         //     context: self.handle as u32,
         //     status: 0,
@@ -188,7 +195,19 @@ impl Context {
         // TODO: limit queue size by queue_size
         self.packets.push_back(packet);
         // posting WT_PACKET(serial, ctx_handle)
-        unsafe { PostMessageW(Some(self.window.0), self.logical_context.msg_base, WPARAM(self.serial), LPARAM(self.handle as isize))? };
+        unsafe { PostMessageW(Some(self.window.0), WindowMessage::Packet.value(self.logical_context.msg_base), WPARAM(self.serial), LPARAM(self.handle as isize))? };
+        Ok(())
+    }
+
+    pub fn proximity(&mut self, value: bool) -> color_eyre::Result<()> {
+        if !self.enabled {
+            bail!("packet sent when context is disabled");
+        }
+        if self.window.0.0 == std::ptr::null_mut() {
+            bail!("packet sent without a valid window");
+        }
+        // posting WT_PROXIMITY(ctx_handle, value)
+        unsafe { PostMessageW(Some(self.window.0), WindowMessage::Proximity.value(self.logical_context.msg_base), WPARAM(self.handle), LPARAM(if value { 0x00010001 } else { 0 }))? };
         Ok(())
     }
 }
@@ -305,14 +324,26 @@ pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Resul
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTOverlap(ctx_id: usize, overlap: bool) -> bool {
-    debug!("!STUB! WTOverlap({:#?}, {:#?})", ctx_id, overlap);
-    false
+    debug!("!STUB! WTOverlap({:#?}, {:#?}) -> true", ctx_id, overlap);
+    true
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTClose(ctx_id: usize) -> bool {
-    debug!("!STUB! WTClose({:#?})", ctx_id);
-    false
+    debug!("WTClose({:#?})", ctx_id);
+    match close(ctx_id) {
+        Ok(v) => v,
+        Err(err) => {
+            error!("WTClose({:#?}) failed!", ctx_id);
+            error!("{:?}", err);
+            false
+        }
+    }
+}
+pub fn close(ctx_id: usize) -> color_eyre::Result<bool> {
+    let mut state = STATE.lock().unwrap();
+    state.contexts.retain(|i, _| *i != ctx_id);
+    Ok(true)
 }
 
 #[unsafe(no_mangle)]
@@ -482,40 +513,47 @@ pub extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) 
         0 => size_of::<WtiLogicalContext>() as u32,
         WTI_INTERFACE => WtiInterface::psm_default().handle_info(n_index, lp_output),
 
-        // WTI_DEFCONTEXT => WtiLogicalContext::psm_default().handle_info(n_index, lp_output),
-        // WTI_DEFSYSCTX => WtiLogicalContext::psm_default().handle_info(n_index, lp_output),
-        WTI_DEFCONTEXT => handle_logctx(n_index, lp_output),
-        WTI_DEFSYSCTX => handle_logctx(n_index, lp_output),
+        WTI_DEFCONTEXT => handle_logctx(n_index, lp_output, false),
+        WTI_DEFSYSCTX => handle_logctx(n_index, lp_output, true),
         // WTI_STATUS => todo!(),
-        // WTI_DEFCONTEXT => todo!(),
-        // WTI_DEFSYSCTX => todo!(),
-        // WTI_DEVICES => WtiDevices::psm_default().handle_info(n_index, lp_output),
         WTI_DEVICES => handle_device(n_index, lp_output),
-        // WTI_CURSORS => WtiCursors::psm_default().handle_info(n_index, lp_output),
         WTI_CURSORS => handle_cursor(n_index, lp_output),
-        // WTI_DEVICES => todo!(),
-        // WTI_CURSORS => todo!(),
         // WTI_EXTENSIONS => todo!(),
+        WTI_DDCTXS => handle_logctx(n_index, lp_output, false),
         // WTI_DDCTXS => todo!(),
+        WTI_DSCTXS => handle_logctx(n_index, lp_output, true),
         // WTI_DSCTXS => todo!(),
         // _ => unreachable!()
         _ => 0
     }
 }
 
-pub fn handle_logctx(index: u32, lp_output: *mut c_void) -> u32 {
+pub fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
     let mut ctx = WtiLogicalContext::psm_default();
-    ctx.status = CXS_ONTOP;
-    ctx.options = CXO_SYSTEM;
-    ctx.pkt_data = PK_CONTEXT | PK_STATUS | PK_TIME | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_ORIENTATION;
-    // ctx.pkt_data = PK_CONTEXT | PK_CHANGED | PK_STATUS | PK_TIME | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION;
-    ctx.move_mask = PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_ORIENTATION;
+    // ctx.status = CXS_ONTOP;
+    if system {
+        ctx.options = CXO_SYSTEM;
+    }
+    ctx.pkt_data = PK_CONTEXT | PK_STATUS | PK_TIME | PK_CHANGED | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_Z | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION | PK_ROTATION;
+    ctx.move_mask = PK_CONTEXT | PK_STATUS | PK_TIME | PK_CHANGED | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_Z | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION | PK_ROTATION;
+    // ctx.move_mask = PK_BUTTONS | PK_X | PK_Y | PK_Z | PK_NORMAL_PRESSURE | PK_ORIENTATION;
     ctx.btn_dn_mask = 0xFFFFFFFF;
     ctx.btn_up_mask = 0xFFFFFFFF;
-    ctx.in_ext_x = 262143;
-    ctx.in_ext_y = 262143;
-    ctx.out_ext_x = 262143;
-    ctx.out_ext_y = 262143;
+
+    ctx.in_org_z = -1023;
+    ctx.in_ext_x  = 15200;
+    ctx.in_ext_y  = 9500;
+    ctx.in_ext_z  = 2047;
+    ctx.out_org_z = -1023;
+    ctx.out_ext_x = 15200;
+    ctx.out_ext_y = 9500;
+    ctx.out_ext_z = 2047;
+    // ctx.in_ext_x = 2048;
+    // ctx.in_ext_y = 2048;
+    // ctx.in_ext_z = 2048;
+    // ctx.out_ext_x = 2048;
+    // ctx.out_ext_y = 2048;
+    // ctx.out_ext_z = 2048;
     ctx.out_sens_x = 0x00010000;
     ctx.out_sens_y = 0x00010000;
     ctx.out_sens_z = 0x00010000;
@@ -529,12 +567,38 @@ pub fn handle_logctx(index: u32, lp_output: *mut c_void) -> u32 {
 pub fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
     let mut ctx = WtiDevices::psm_default();
     ctx.hardware = HWC_HARDPROX | HWC_PHYSID_CURSORS;
-    ctx.packet_data = PK_CONTEXT | PK_STATUS | PK_TIME | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_ORIENTATION;
-    // ctx.packet_data = PK_CONTEXT | PK_CHANGED | PK_STATUS | PK_TIME | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION;
-    ctx.device_x.max = 262143;
-    ctx.device_x.resolution = 0x00002710;
-    ctx.device_y.max = 262143;
-    ctx.device_y.resolution = 0x00002710;
+    ctx.packet_data = PK_CONTEXT | PK_STATUS | PK_TIME | PK_CHANGED | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_Z | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION | PK_ROTATION;
+
+    // DVC_X                          { 16} { 16} {min=0;max=15199;units=2 [CENTIMETERS];res=0x03e80000 [1000.0]}
+    // DVC_Y                          { 16} { 16} {min=0;max=9499;units=2 [CENTIMETERS];res=0x03e80000 [1000.0]}
+    // DVC_Z                          { 16} { 16} {min=-1023;max=1023;units=2 [CENTIMETERS];res=0x03e80000 [1000.0]}
+    ctx.device_x.max = 15199;
+    ctx.device_x.units = TU_CENTIMETERS;
+    ctx.device_x.resolution = 0x03e80000;
+    ctx.device_y.max = 9499;
+    ctx.device_y.units = TU_CENTIMETERS;
+    ctx.device_y.resolution = 0x03e80000;
+    ctx.device_z.min = -1023;
+    ctx.device_z.max = 1023;
+    ctx.device_z.units = TU_CENTIMETERS;
+    ctx.device_z.resolution = 0x03e80000;
+
+    // ctx.device_x.max = 2048;
+    // // ctx.device_x.resolution = 0x00010000;
+    // ctx.device_x.resolution = 0x03e80000;
+    // ctx.device_y.max = 2048;
+    // // ctx.device_y.resolution = 0x00010000;
+    // ctx.device_y.resolution = 0x03e80000;
+    // ctx.device_z.max = 2048;
+    // // ctx.device_z.resolution = 0x00010000;
+    // ctx.device_z.resolution = 0x03e80000;
+    ctx.normal_pressure.max = 32767;
+    ctx.normal_pressure.units = TU_NONE;
+    ctx.normal_pressure.resolution = 0;
+    // ctx.tangential_pressure.max = 32767;
+    ctx.tangential_pressure.max = 1023;
+    ctx.tangential_pressure.units = TU_NONE;
+    ctx.tangential_pressure.resolution = 0;
     ctx.orientation = [
         Axis {
             min: 0,
@@ -560,12 +624,16 @@ pub fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
 
 pub fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
     let mut ctx = WtiCursors::psm_default();
-    ctx.packet_data = PK_TIME | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION;
-    // ctx.packet_data = PK_CONTEXT | PK_CHANGED | PK_STATUS | PK_TIME | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION;
-    ctx.buttons = 9;
-    ctx.physical_button = 1;
+    ctx.packet_data = PK_CONTEXT | PK_STATUS | PK_TIME | PK_CHANGED | PK_SERIAL_NUMBER | PK_CURSOR | PK_BUTTONS | PK_X | PK_Y | PK_Z | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_ORIENTATION | PK_ROTATION;
+    ctx.buttons = 3;
+    ctx.button_bits = 3;
+    ctx.physical_button = 0;
     ctx.tangential_button = 1;
-    ctx.capabilities = CRC_MULTIMODE;
+    // ctx.buttons = 16;
+    // ctx.button_bits = 16;
+    // ctx.physical_button = 0;
+    // ctx.tangential_button = 1;
+    // ctx.capabilities = CRC_MULTIMODE;
     ctx.handle_info(index, lp_output)
 }
 

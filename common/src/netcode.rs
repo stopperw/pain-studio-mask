@@ -18,6 +18,10 @@ pub enum PSMPacketC2S {
         normal_pressure: u32,
         tangential_pressure: u32
     },
+    /// Is stylus in proximity?
+    Proximity {
+        value: bool
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
