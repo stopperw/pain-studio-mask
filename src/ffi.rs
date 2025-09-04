@@ -1,12 +1,6 @@
-use std::{collections::{HashMap, VecDeque}, ffi::c_void, sync::{LazyLock, Mutex}};
+use std::ffi::c_void;
 
-use color_eyre::eyre::bail;
-use log::{debug, error, info};
-use static_init::constructor;
-use windows::{
-    core::*,
-    Win32::{Foundation::{HWND, LPARAM, WPARAM}, UI::WindowsAndMessaging::*},
-};
+use log::debug;
 
 use crate::info_write::{info_write, info_write_array};
 
@@ -76,6 +70,18 @@ pub const CXL_INASPECT: u32 = 0x0002;
 pub const CXL_SENSITIVITY: u32 = 0x0004;
 pub const CXL_MARGIN: u32 = 0x0008;
 pub const CXL_SYSOUT: u32 = 0x0010;
+
+// Packet status values
+// Specifies that the cursor is out of the context.
+pub const TPS_PROXIMITY: u32 = 0x0001;
+// Specifies that the event queue for the context has overflowed.
+pub const TPS_QUEUE_ERR: u32 = 0x0002;
+// Specifies that the cursor is in the margin of the context.
+pub const TPS_MARGIN: u32 = 0x0004;
+// Specifies that the cursor is out of the context, but that the context has grabbed input while waiting for a button release event.
+pub const TPS_GRAB: u32 = 0x0008;
+// Specifies that the cursor is in its inverted state. (added in spec 1.1)
+pub const TPS_INVERT: u32 = 0x0010;
 
 pub const INTERFACE_WINTABID_LEN: usize = 34;
 #[repr(C)]
@@ -159,7 +165,7 @@ pub const HWC_TOUCH: u32 = 0x0002;
 pub const HWC_HARDPROX: u32 = 0x0004;
 pub const HWC_PHYSID_CURSORS: u32 = 0x0008;
 
-pub const DEVICES_NAME_LEN: usize = 48;
+pub const DEVICES_NAME_LEN: usize = 256;
 #[repr(C)]
 pub struct WtiDevices {
     /// Returns a displayable null-terminated string describing the device, manufacturer, and revision level.
@@ -211,17 +217,17 @@ impl WtiDevices {
     pub fn psm_default() -> Self {
         let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
         let mut wintabid = [0u8; DEVICES_NAME_LEN];
-        for i in 0..DEVICES_NAME_LEN {
-            if i % 2 == 1 {
-                continue;
-            }
-            let u16i = i / 2;
-            if wintabids.len() <= u16i {
-                break;
-            }
-            wintabid[i] = wintabids[u16i] as u8;
-            wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
-        }
+        // for i in 0..DEVICES_NAME_LEN {
+        //     if i % 2 == 1 {
+        //         continue;
+        //     }
+        //     let u16i = i / 2;
+        //     if wintabids.len() <= u16i {
+        //         break;
+        //     }
+        //     wintabid[i] = wintabids[u16i] as u8;
+        //     wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
+        // }
         // println!("{:#?}", wintabid);
 
         WtiDevices {
@@ -248,9 +254,12 @@ impl WtiDevices {
     }
 
     pub fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
+        debug!("9");
         match index {
             0 => info_write(self, lp_output),
-            1 => info_write_array(&self.name, lp_output, DEVICES_NAME_LEN),
+            // TODO: replace with non-array version??
+            // 1 => info_write_array(&self.name, lp_output, DEVICES_NAME_LEN),
+            1 => info_write(&self.name, lp_output),
             2 => info_write(&self.hardware, lp_output),
             3 => info_write(&self.num_cursor_types, lp_output),
             4 => info_write(&self.first_cursor_type, lp_output),
@@ -278,7 +287,7 @@ pub const CRC_MULTIMODE: u32 = 0x0001;
 pub const CRC_AGGREGATE: u32 = 0x0002;
 pub const CRC_INVERT: u32 = 0x0004;
 
-pub const CURSORS_NAME_LEN: usize = 48;
+pub const CURSORS_NAME_LEN: usize = 256;
 #[repr(C)]
 pub struct WtiCursors {
     /// Returns a displayable zero-terminated string containing the name of the cursor.
@@ -336,17 +345,17 @@ impl WtiCursors {
     pub fn psm_default() -> Self {
         let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
         let mut wintabid = [0u8; CURSORS_NAME_LEN];
-        for i in 0..CURSORS_NAME_LEN {
-            if i % 2 == 1 {
-                continue;
-            }
-            let u16i = i / 2;
-            if wintabids.len() <= u16i {
-                break;
-            }
-            wintabid[i] = wintabids[u16i] as u8;
-            wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
-        }
+        // for i in 0..CURSORS_NAME_LEN {
+        //     if i % 2 == 1 {
+        //         continue;
+        //     }
+        //     let u16i = i / 2;
+        //     if wintabids.len() <= u16i {
+        //         break;
+        //     }
+        //     wintabid[i] = wintabids[u16i] as u8;
+        //     wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
+        // }
         // println!("{:#?}", wintabid);
 
         WtiCursors {
@@ -612,7 +621,7 @@ impl Axis {
 /// This implementation just includes all the fields.
 pub struct Packet {
     /// Specifies the context that generated the event.
-    pub context: usize,//*mut c_void,
+    pub context: u32,//*mut c_void,
     /// Specifies various status and error conditions. These conditions can be combined by using the bitwise OR operator.
     /// The pkStatus field can be any combination of the status values.
     pub status: u32,

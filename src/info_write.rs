@@ -45,6 +45,7 @@ pub fn info_write_array<T>(data: *const T, lp_output: *mut c_void, len: usize) -
     let size = size_of::<T>() as u32;
     debug!("info_write_array({:#?}, {:#?}, {}) -> {}", data, lp_output, len, size);
     if lp_output == std::ptr::null_mut() {
+        debug!("10.5");
         return size;
     }
     unsafe { std::ptr::copy(data, lp_output as *mut _, len); }

@@ -1,17 +1,19 @@
-use std::{collections::{HashMap, VecDeque}, ffi::c_void, sync::{atomic::AtomicBool, LazyLock, Mutex}, thread::JoinHandle};
+use std::{collections::{HashMap, VecDeque}, ffi::c_void, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{LazyLock, Mutex}};
 
-use color_eyre::eyre::bail;
+use color_eyre::eyre::{bail, ContextCompat};
 use log::{debug, error, info};
 use static_init::{constructor, destructor};
 use windows::{
-    core::*,
+    // core::*,
     Win32::{Foundation::{HWND, LPARAM, WPARAM}, UI::WindowsAndMessaging::*},
 };
 
-use crate::info_write::{info_write, info_write_array};
+use crate::info_write::info_write;
 use crate::ffi::*;
+use crate::netcode::*;
 
 pub mod info_write;
+pub mod netcode;
 pub mod ffi;
 
 static STATE: LazyLock<Mutex<PSM>> = LazyLock::new(|| Mutex::new(PSM::default()));
@@ -23,6 +25,7 @@ extern "C" fn init_main() {
     colog::init();
     color_eyre::install().ok();
     if let Err(err) = main() {
+        error!("{:?}", err);
         error!("PSM's main thread failed! It's recommended to restart the app.");
     }
 }
@@ -38,22 +41,93 @@ pub fn main() -> color_eyre::Result<()> {
 
     // TODO: TCP socket
     // TODO: config file
-    info!("PSM is now listening on 127.0.0.1:40302");
+    info!("PSM is loaded!");
 
-    let ptthread = std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            // if WE_SHOULD_DIE.load(std::sync::atomic::Ordering::Relaxed) {
-            //     break;
-            // }
-            let mut state = STATE.lock().unwrap();
-            for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
-                ctx.send_packet().ok();
-            }
-        }
-    });
+    // TODO: kill? threads
+    std::thread::spawn(tcp_thread);
+    // let _ptthread = std::thread::spawn(move || {
+    //     loop {
+    //         std::thread::sleep(std::time::Duration::from_secs(3));
+    //         debug!("tick");
+    //         // if WE_SHOULD_DIE.load(std::sync::atomic::Ordering::Relaxed) {
+    //         //     break;
+    //         // }
+    //         let mut state = STATE.lock().unwrap();
+    //         for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
+    //             ctx.send_packet().ok();
+    //         }
+    //     }
+    // });
     // THREADS.lock().unwrap().push(ptthread);
 
+    Ok(())
+}
+
+pub fn tcp_thread() {
+    let socket = TcpListener::bind("127.0.0.1:40302").unwrap();
+    loop {
+        info!("PSM is now listening on 127.0.0.1:40302");
+        let stream = socket.accept();
+        match stream {
+            Ok((stream, addr)) => {
+                info!("Accepted connection from {}", addr);
+                match handle_client(stream) {
+                    Ok(_) => {},
+                    Err(err) => {
+                        info!("{:?}", err);
+                        info!("Connection from {} ended", addr);
+                    },
+                }
+            },
+            Err(err) => error!("Connection failed! {:?}", err),
+        }
+    }
+}
+pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
+    loop {
+        let mut packet_size_buf = [0u8; 4];
+        socket.read_exact(&mut packet_size_buf)?;
+        let size = u32::from_be_bytes(packet_size_buf);
+        let mut buf: Vec<u8> = vec![0u8; size as usize];
+        socket.read_exact(&mut buf)?;
+
+        let packet = serde_json::from_slice::<PSMPacketC2S>(&buf)?;
+        debug!("Packet received: {:#?}", packet);
+        match packet {
+            PSMPacketC2S::Hi { name } => {
+                info!("Client: {}", name);
+                send_packet(&mut socket, &PSMPacketS2C::Hi { compatible: 1 })?;
+            }
+            PSMPacketC2S::RawTabletPacket { status, buttons, x, y, z, normal_pressure, tangential_pressure } => {
+                let mut state = STATE.lock().unwrap();
+                for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
+                    ctx.send_packet(Packet {
+                        context: ctx.handle as u32,
+                        status,
+                        time: 0,
+                        changed: 0xFFFFFFFF,
+                        serial: 0,
+                        cursor: 0,
+                        buttons,
+                        x,
+                        y,
+                        z,
+                        normal_pressure,
+                        tangential_pressure,
+                        orientation: Orientation::default(),
+                        rotation: Rotation::default(),
+                    }).ok();
+                }
+            }
+        }
+    }
+    // Ok(())
+}
+pub fn send_packet(stream: &mut impl Write, packet: &PSMPacketS2C) -> color_eyre::Result<()> {
+    let data = serde_json::to_vec(packet)?;
+    let bytes: [u8; 4] = (data.len() as u32).to_be_bytes();
+    stream.write_all(&bytes)?;
+    stream.write_all(&data)?;
     Ok(())
 }
 
@@ -69,6 +143,7 @@ pub struct Context {
     pub window: ThreadHWND,
     pub logical_context: WtiLogicalContext,
     pub packets: VecDeque<Packet>,
+    pub queue_size: usize,
     pub serial: usize
 }
 impl Context {
@@ -79,11 +154,12 @@ impl Context {
             window: ThreadHWND::default(),
             logical_context: WtiLogicalContext::psm_default(),
             packets: VecDeque::new(),
+            queue_size: 1024,
             serial: 0
         }
     }
 
-    pub fn send_packet(&mut self) -> color_eyre::Result<()> {
+    pub fn send_packet(&mut self, mut packet: Packet) -> color_eyre::Result<()> {
         if !self.enabled {
             bail!("packet sent when context is disabled");
         }
@@ -91,23 +167,27 @@ impl Context {
             bail!("packet sent without a valid window");
         }
         self.serial += 1;
-        let packet = Packet {
-            context: self.handle,
-            status: 0,
-            time: 1,
-            changed: 0,
-            serial: self.serial as u32,
-            cursor: 2,
-            buttons: 3,
-            x: 4,
-            y: 5,
-            z: 6,
-            normal_pressure: 0,
-            tangential_pressure: 0,
-            orientation: Orientation::default(),
-            rotation: Rotation::default(),
-        };
+        packet.context = self.handle as u32;
+        packet.serial = self.serial as u32;
+        // let packet = Packet {
+        //     context: self.handle as u32,
+        //     status: 0,
+        //     time: self.serial as u32,
+        //     changed: 0xFFFFFFFF,
+        //     serial: self.serial as u32,
+        //     cursor: 0,
+        //     buttons: 0b11111111_11111111_11111111_11111111,
+        //     x: 960,
+        //     y: 540,
+        //     z: 0,
+        //     normal_pressure: 65535,
+        //     tangential_pressure: 65535,
+        //     orientation: Orientation::default(),
+        //     rotation: Rotation::default(),
+        // };
+        // TODO: limit queue size by queue_size
         self.packets.push_back(packet);
+        // posting WT_PACKET(serial, ctx_handle)
         unsafe { PostMessageW(Some(self.window.0), self.logical_context.msg_base, WPARAM(self.serial), LPARAM(self.handle as isize))? };
         Ok(())
     }
@@ -118,11 +198,19 @@ pub struct ThreadHWND(pub HWND);
 unsafe impl Send for ThreadHWND {}
 unsafe impl Sync for ThreadHWND {}
 
-pub struct PSMPacket {}
-
+#[unsafe(no_mangle)]
+pub extern "C" fn WTOpenA(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enable: bool) -> usize {
+    debug!("WTOpenA({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
+    WTOpen(hwnd, lp_log_ctx, f_enable)
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn WTOpenW(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enable: bool) -> usize {
     debug!("WTOpenW({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
+    WTOpen(hwnd, lp_log_ctx, f_enable)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn WTOpen(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enable: bool) -> usize {
+    debug!("WTOpen({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
     if lp_log_ctx == std::ptr::null_mut() {
         error!("WTOpen lp_log_ctx is null");
         return 0;
@@ -163,41 +251,230 @@ pub extern "C" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
     debug!("WTPacketsGet({:#?}, {:#?}, {:#?})", ctx_id, max_packets, ptr);
+    match packets_get(ctx_id, max_packets, ptr) {
+        Ok(v) => v,
+        Err(err) => {
+            error!("WTPacketsGet({:#?}, {:#?}, {:#?}) failed!", ctx_id, max_packets, ptr);
+            error!("{:?}", err);
+            0
+        }
+    }
+}
+pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
     let mut state = STATE.lock().unwrap();
-    let ctx = match state.contexts.get_mut(&ctx_id) {
-        Some(ctx) => ctx,
-        None => return 0
-    };
+    let ctx = state.contexts.get_mut(&ctx_id).wrap_err("context not found")?;
     let mut count = 0;
     for i in 0..max_packets {
         let packet = match ctx.packets.pop_front() {
             Some(x) => x,
             None => break
         };
-        // FIXME: ooooh scary pointer arithmetics.
+        // TODO: FIXME: ooooh scary pointer arithmetics.
         let packet_size = size_of::<Packet>();
-        unsafe { info_write(&packet, ptr.wrapping_add(packet_size * (i as usize))); }
+        info_write(&packet, ptr.wrapping_add(packet_size * (i as usize)));
         count += 1;
     }
 
-    // unsafe {
-    //     std::ptr::copy(slice, ptr, count);
-    // }
-    // info_write_array(slice, ptr, count);
-
-    count as u32
+    Ok(count as u32)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTPacket(ctx_id: usize, serial: u32, ptr: *mut c_void) -> bool {
-    debug!("!STUB! WTPacket({:#?}, {:#?}, {:#?})", ctx_id, serial, ptr);
+    debug!("WTPacket({:#?}, {:#?}, {:#?})", ctx_id, serial, ptr);
+    match packet(ctx_id, serial, ptr) {
+        Ok(v) => v,
+        Err(err) => {
+            error!("WTPacket({:#?}, {:#?}, {:#?}) failed!", ctx_id, serial, ptr);
+            error!("{:?}", err);
+            false
+        }
+    }
+}
+pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Result<bool> {
+    let mut state = STATE.lock().unwrap();
+    let ctx = state.contexts.get_mut(&ctx_id).wrap_err("context not found")?;
+    ctx.packets.retain_mut(|x| x.serial >= serial);
+    let packet = match ctx.packets.iter().find(|x| x.serial == serial) {
+        Some(x) => x,
+        None => return Ok(false)
+    };
+    info_write(&packet, ptr);
+    ctx.packets.retain_mut(|x| x.serial > serial);
+    Ok(true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTOverlap(ctx_id: usize, overlap: bool) -> bool {
+    debug!("!STUB! WTOverlap({:#?}, {:#?})", ctx_id, overlap);
     false
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn WTClose(ctx_id: usize) -> bool {
+    debug!("!STUB! WTClose({:#?})", ctx_id);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTGetA(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTGetA({:#?}, {:#?})", ctx_id, ptr);
+    WTGet(ctx_id, ptr)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn WTGetW(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTGetW({:#?}, {:#?})", ctx_id, ptr);
+    WTGet(ctx_id, ptr)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn WTGet(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTGet({:#?}, {:#?})", ctx_id, ptr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTSetA(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTSetA({:#?}, {:#?})", ctx_id, ptr);
+    WTGet(ctx_id, ptr)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn WTSetW(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTSetW({:#?}, {:#?})", ctx_id, ptr);
+    WTGet(ctx_id, ptr)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn WTSet(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTSet({:#?}, {:#?})", ctx_id, ptr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTExtGet(ctx_id: usize, ext: u32, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTExtGet({:#?}, {:#?}, {:#?})", ctx_id, ext, ptr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTExtSet(ctx_id: usize, ext: u32, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTExtSet({:#?}, {:#?}, {:#?})", ctx_id, ext, ptr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTSave(ctx_id: usize, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTSave({:#?}, {:#?})", ctx_id, ptr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTRestore(hwnd: HWND, ptr: *mut c_void, value: bool) -> usize {
+    debug!("!STUB! WTRestore({:#?}, {:#?}, {:#?})", hwnd, ptr, value);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
+    debug!("!STUB! WTPacketsPeek({:#?}, {:#?}, {:#?})", ctx_id, ext, ptr);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTDataGet(ctx_id: usize, begin: u32, end: u32, max_packets: i32, ptr: *mut c_void, ints: *mut c_void) -> i32 {
+    debug!("!STUB! WTDataGet({:#?}, {:#?}, {:#?}, {:#?}, {:#?}, {:#?})", ctx_id, begin, end, max_packets, ptr, ints);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTDataPeek(ctx_id: usize, begin: u32, end: u32, max_packets: i32, ptr: *mut c_void, ints: *mut c_void) -> i32 {
+    debug!("!STUB! WTDataPeek({:#?}, {:#?}, {:#?}, {:#?}, {:#?}, {:#?})", ctx_id, begin, end, max_packets, ptr, ints);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTQueuePacketsEx(ctx_id: usize, old: *mut c_void, new: *mut c_void) -> bool {
+    debug!("!STUB! WTQueuePacketsEx({:#?}, {:#?}, {:#?})", ctx_id, old, new);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTQueueSizeGet(ctx_id: usize) -> u32 {
+    debug!("WTQueueSizeGet({:#?})", ctx_id);
+    match queue_size_get(ctx_id) {
+        Ok(v) => v,
+        Err(err) => {
+            error!("WTQueueSizeGet({:#?}) failed!", ctx_id);
+            error!("{:?}", err);
+            0
+        }
+    }
+}
+pub fn queue_size_get(ctx_id: usize) -> color_eyre::Result<u32> {
+    let mut state = STATE.lock().unwrap();
+    let ctx = state.contexts.get_mut(&ctx_id).wrap_err("context not found")?;
+    Ok(ctx.queue_size as u32)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTQueueSizeSet(ctx_id: usize, num_packets: u32) -> bool {
+    debug!("WTQueueSizeSet({:#?}, {:#?})", ctx_id, num_packets);
+    match queue_size_set(ctx_id, num_packets) {
+        Ok(v) => v,
+        Err(err) => {
+            error!("WTQueueSizeSet({:#?}, {:#?}) failed!", ctx_id, num_packets);
+            error!("{:?}", err);
+            false
+        }
+    }
+}
+pub fn queue_size_set(ctx_id: usize, num_packets: u32) -> color_eyre::Result<bool> {
+    let mut state = STATE.lock().unwrap();
+    let ctx = state.contexts.get_mut(&ctx_id).wrap_err("context not found")?;
+    ctx.queue_size = num_packets as usize;
+    Ok(true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTMgrOpen(hwnd: HWND, msg_base: u32) -> usize {
+    debug!("!STUB! WTMgrOpen({:#?}, {:#?})", hwnd, msg_base);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTMgrExt(mgr: usize, value: u32, ptr: *mut c_void) -> bool {
+    debug!("!STUB! WTMgrExt({:#?}, {:#?}, {:#?})", mgr, value, ptr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTMgrClose(mgr: usize) -> bool {
+    debug!("!STUB! WTMgrClose({:#?})", mgr);
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTMgrDefContextEx(mgr: usize, device: u32, system: bool) -> usize {
+    debug!("!STUB! WTMgrDefContextEx({:#?}, {:#?}, {:#?})", mgr, device, system);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTMgrPacketHookDefProc(value1: i32, w: WPARAM, l: LPARAM, hook: *mut c_void) -> *mut c_void {
+    debug!("!STUB! WTMgrPacketHookDefProc({:#?}, {:#?}, {:#?}, {:#?})", value1, w, l, hook);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn WTInfoA(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+    debug!("WTInfoA({}, {}, {:#?});", w_category, n_index, lp_output);
+    WTInfo(w_category, n_index, lp_output)
+}
+#[unsafe(no_mangle)]
 pub extern "C" fn WTInfoW(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
     debug!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
-
+    WTInfo(w_category, n_index, lp_output)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+    debug!("WTInfo({}, {}, {:#?});", w_category, n_index, lp_output);
 
     match w_category {
         // If the wCategory argument is zero, the function copies no data to the output buffer,
