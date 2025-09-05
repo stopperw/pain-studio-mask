@@ -1,6 +1,9 @@
 use std::ffi::c_void;
 
-use crate::info_write::{info_write, info_write_array};
+use crate::{
+    info_write::{info_write, info_write_array},
+    ptr::copy,
+};
 
 /// Returns [WtiInterface]
 pub const WTI_INTERFACE: u32 = 1;
@@ -48,6 +51,8 @@ pub const PK_TANGENT_PRESSURE: u32 = 0x0800;
 pub const PK_ORIENTATION: u32 = 0x1000;
 /// Rotation info (added in spec 1.1)
 pub const PK_ROTATION: u32 = 0x2000;
+// ROTNZYXBCNCTSC
+// 01010111100100
 
 // Context option values
 pub const CXO_SYSTEM: u32 = 0x0001;
@@ -153,7 +158,7 @@ impl WtiInterface {
             8 => info_write(&self.ctx_save_size, lp_output),
             9 => info_write(&self.num_extensions, lp_output),
             10 => info_write(&self.num_managers, lp_output),
-            _ => 0
+            _ => 0,
         }
     }
 }
@@ -169,10 +174,10 @@ pub struct WtiDevices {
     /// Returns a displayable null-terminated string describing the device, manufacturer, and revision level.
     pub name: [u8; DEVICES_NAME_LEN],
     /// Returns flags indicating hardware and driver capabilities, as defined below:
-	/// [HWC_INTEGRATED]: Indicates that the display and digitizer share the same surface.
+    /// [HWC_INTEGRATED]: Indicates that the display and digitizer share the same surface.
     /// [HWC_TOUCH]: Indicates that the cursor must be in physical contact with the device to report position.
-	/// [HWC_HARDPROX]: Indicates that device can generate events when the cursor is entering and leaving the physical detection range.
-	/// [HWC_PHYSID_CURSORS]: Indicates that device can uniquely identify the active cursor in hardware.
+    /// [HWC_HARDPROX]: Indicates that device can generate events when the cursor is entering and leaving the physical detection range.
+    /// [HWC_PHYSID_CURSORS]: Indicates that device can uniquely identify the active cursor in hardware.
     pub hardware: u32,
     /// Returns the number of supported cursor types.
     pub num_cursor_types: u32,
@@ -231,23 +236,84 @@ impl WtiDevices {
 
         WtiDevices {
             name: wintabid,
-            hardware: 0,
+            hardware: HWC_HARDPROX | HWC_PHYSID_CURSORS,
             num_cursor_types: 0,
             first_cursor_type: 0,
             packet_rate: 100,
-            packet_data: 0,
+            packet_data: PK_CONTEXT
+                | PK_STATUS
+                | PK_TIME
+                | PK_CHANGED
+                | PK_SERIAL_NUMBER
+                | PK_CURSOR
+                | PK_BUTTONS
+                | PK_X
+                | PK_Y
+                | PK_Z
+                | PK_NORMAL_PRESSURE
+                | PK_TANGENT_PRESSURE
+                | PK_ORIENTATION
+                | PK_ROTATION,
             packet_mode: 0,
             csr_data: 0,
             x_margin: 0,
             y_margin: 0,
             z_margin: 0,
-            device_x: Axis::psm_default(),
-            device_y: Axis::psm_default(),
-            device_z: Axis::psm_default(),
-            normal_pressure: Axis::psm_default(),
-            tangential_pressure: Axis::psm_default(),
-            orientation: [Axis::psm_default(), Axis::psm_default(), Axis::psm_default()],
-            rotation: [Axis::psm_default(), Axis::psm_default(), Axis::psm_default()],
+            device_x: Axis {
+                min: 0,
+                max: 15199,
+                units: TU_CENTIMETERS,
+                resolution: 0x03e8_0000,
+            },
+            device_y: Axis {
+                min: 0,
+                max: 9499,
+                units: TU_CENTIMETERS,
+                resolution: 0x03e8_0000,
+            },
+            device_z: Axis {
+                min: -1023,
+                max: 1023,
+                units: TU_CENTIMETERS,
+                resolution: 0x03e8_0000,
+            },
+            normal_pressure: Axis {
+                min: 0,
+                max: 32767,
+                units: TU_NONE,
+                resolution: 0,
+            },
+            tangential_pressure: Axis {
+                min: 0,
+                max: 1023,
+                units: TU_NONE,
+                resolution: 0,
+            },
+            orientation: [
+                Axis {
+                    min: 0,
+                    max: 3600,
+                    units: TU_CIRCLE,
+                    resolution: 0x0e100000,
+                },
+                Axis {
+                    min: -1000,
+                    max: 1000,
+                    units: TU_CIRCLE,
+                    resolution: 0x0e100000,
+                },
+                Axis {
+                    min: 0,
+                    max: 3600,
+                    units: TU_CIRCLE,
+                    resolution: 0x0e100000,
+                },
+            ],
+            rotation: [
+                Axis::psm_default(),
+                Axis::psm_default(),
+                Axis::psm_default(),
+            ],
             pnp_id: [0u8; 8],
         }
     }
@@ -276,7 +342,7 @@ impl WtiDevices {
             17 => info_write(&self.orientation, lp_output),
             18 => info_write(&self.rotation, lp_output),
             19 => info_write_array(&self.pnp_id, lp_output, 8),
-            _ => 0
+            _ => 0,
         }
     }
 }
@@ -335,8 +401,8 @@ pub struct WtiCursors {
     pub min_buttons: u32,
     /// Returns flags indicating cursor capabilities, as defined by the values and their meanings, below:
     /// [CRC_MULTIMODE]: Indicates this cursor type describes one of several modes of a single physical cursor. Consecutive cursor type categories describe the modes; the CSR_MODE data item gives the mode number of each cursor type.
-	/// [CRC_AGGREGATE]: Indicates this cursor type describes several physical cursors that cannot be distinguished by software.
-	/// [CRC_INVERT]: Indicates this cursor type describes the physical cursor in its inverted orientation; the previous consecutive cursor type category describes the normal orientation.
+    /// [CRC_AGGREGATE]: Indicates this cursor type describes several physical cursors that cannot be distinguished by software.
+    /// [CRC_INVERT]: Indicates this cursor type describes the physical cursor in its inverted orientation; the previous consecutive cursor type category describes the normal orientation.
     pub capabilities: u32,
 }
 impl WtiCursors {
@@ -365,18 +431,31 @@ impl WtiCursors {
         WtiCursors {
             name: wintabid,
             active: 0xFFFFFFFF,
-            packet_data: 0,
-            buttons: 1,
-            button_bits: 1,
+            packet_data: PK_CONTEXT
+                | PK_STATUS
+                | PK_TIME
+                | PK_CHANGED
+                | PK_SERIAL_NUMBER
+                | PK_CURSOR
+                | PK_BUTTONS
+                | PK_X
+                | PK_Y
+                | PK_Z
+                | PK_NORMAL_PRESSURE
+                | PK_TANGENT_PRESSURE
+                | PK_ORIENTATION
+                | PK_ROTATION,
+            buttons: 32,
+            button_bits: 32,
             button_names: 0,
             button_map: [0u8; 32],
             system_button_map: [0u8; 32],
             physical_button: 0,
             npbtnmarks: [0, 1],
-            npresponse: defr.clone(),//[0, 0],
-            tangential_button: 0,
+            npresponse: defr.clone(), //[0, 0],
+            tangential_button: 1,
             tpbtnmarks: [0, 1],
-            tpresponse: defr,//[0, 0],
+            tpresponse: defr, //[0, 0],
             physical_id: 0,
             csr_mode: 0,
             minpktdata: 0,
@@ -407,7 +486,7 @@ impl WtiCursors {
             17 => 0, //info_write(&self.minpktdata, lp_output),
             18 => 0, //info_write(&self.min_buttons, lp_output),
             19 => info_write(&self.capabilities, lp_output),
-            _ => 0
+            _ => 0,
         }
     }
 }
@@ -416,28 +495,28 @@ pub const LOGICAL_CONTEXT_NAMELEN: usize = 80;
 #[derive(Debug)]
 #[repr(C, align(4))]
 pub struct WtiLogicalContext {
-    /// Returns a 40 character array containing the default name.
+    /// Returns a 40 character array containing the default name in UTF-16.
     /// The name may occupy zero to 39 characters; the remainder of the array is padded with zeroes.
     pub name: [u8; LOGICAL_CONTEXT_NAMELEN],
     /// Returns option flags.
     /// For the default digitizing context, CXO_MARGIN and CXO_MGNINSIDE are allowed.
     /// For the default system context, CXO_SYSTEM is required; CXO_PEN, CXO_MARGIN, and CXO_MGNINSIDE are allowed.
     pub options: u32,
-    /// Returns zero.
+    /// Returns the status.
     pub status: u32,
     /// Returns which attributes of the default context are locked.
     pub locks: u32,
-    /// Returns the value [WT_DEFBASE].
+    /// Application msg base number.
     pub msg_base: u32,
     /// Returns the default device. If this value is -1, then it also known as a "virtual device".
     pub device: u32,
     /// Returns the default context packet report rate, in Hertz.
-    pub pkt_rate: u32,
+    pub packet_rate: u32,
     /// Returns which optional data items will be in packets returned from the context.
     /// For the default digitizing context, this field must at least indicate buttons, x, and y data. ??????
-    pub pkt_data: u32,
+    pub packet_data: u32,
     /// Returns whether the packet data items will be returned in absolute or relative mode.
-    pub pkt_mode: u32,
+    pub packet_mode: u32,
     /// Returns which packet data items can generate motion events in the context.
     pub move_mask: u32,
     /// Returns the buttons for which button press events will be processed in the context.
@@ -477,9 +556,9 @@ pub struct WtiLogicalContext {
     pub out_sens_z: i32,
     /// Returns the default system cursor tracking mode.
     pub sys_mode: i32,
-    /// Returns 0.
+    /// Returns the current screen display origin in pixels. (X)
     pub sys_org_x: i32,
-    /// Returns 0.
+    /// Returns the current screen display origin in pixels. (Y)
     pub sys_org_y: i32,
     /// Returns the current screen display size in pixels. (X)
     pub sys_ext_x: i32,
@@ -509,39 +588,65 @@ impl WtiLogicalContext {
 
         WtiLogicalContext {
             name: wintabid,
-            options: 0,
-            status: 0, // !
+            options: CXO_SYSTEM | CXO_MESSAGES | CXO_CSRMESSAGES,
+            status: 0,
             locks: 0,
             msg_base: WT_DEFBASE,
             device: 0,
-            pkt_rate: 100,
-            pkt_data: 0,
-            pkt_mode: 0,
-            move_mask: 0,
-            btn_dn_mask: 0,
-            btn_up_mask: 0,
+            packet_rate: 100,
+            packet_data: PK_CONTEXT
+                | PK_STATUS
+                | PK_TIME
+                | PK_CHANGED
+                | PK_SERIAL_NUMBER
+                | PK_CURSOR
+                | PK_BUTTONS
+                | PK_X
+                | PK_Y
+                | PK_Z
+                | PK_NORMAL_PRESSURE
+                | PK_TANGENT_PRESSURE
+                | PK_ORIENTATION
+                | PK_ROTATION,
+            packet_mode: 0,
+            move_mask: PK_CONTEXT
+                | PK_STATUS
+                | PK_TIME
+                | PK_CHANGED
+                | PK_SERIAL_NUMBER
+                | PK_CURSOR
+                | PK_BUTTONS
+                | PK_X
+                | PK_Y
+                | PK_Z
+                | PK_NORMAL_PRESSURE
+                | PK_TANGENT_PRESSURE
+                | PK_ORIENTATION
+                | PK_ROTATION,
+            btn_dn_mask: 0xFFFFFFFF,
+            btn_up_mask: 0xFFFFFFFF,
             in_org_x: 0,
             in_org_y: 0,
             in_org_z: 0,
-            in_ext_x: 0,
-            in_ext_y: 0,
-            in_ext_z: 0,
+            in_ext_x: 1024,
+            in_ext_y: 1024,
+            in_ext_z: 1024,
             out_org_x: 0,
             out_org_y: 0,
             out_org_z: 0,
-            out_ext_x: 0,
-            out_ext_y: 0,
-            out_ext_z: 0,
-            out_sens_x: 0,
-            out_sens_y: 0,
-            out_sens_z: 0,
+            out_ext_x: 1024,
+            out_ext_y: 1024,
+            out_ext_z: 1024,
+            out_sens_x: 0x00010000,
+            out_sens_y: 0x00010000,
+            out_sens_z: 0x00010000,
             sys_mode: 0,
             sys_org_x: 0,
             sys_org_y: 0,
-            sys_ext_x: 0,
-            sys_ext_y: 0,
-            sys_sens_x: 0,
-            sys_sens_y: 0,
+            sys_ext_x: 1920,
+            sys_ext_y: 1080,
+            sys_sens_x: 0x00010000,
+            sys_sens_y: 0x00010000,
         }
     }
 
@@ -554,9 +659,9 @@ impl WtiLogicalContext {
             4 => info_write(&self.locks, lp_output),
             5 => info_write(&self.msg_base, lp_output),
             6 => info_write(&self.device, lp_output),
-            7 => info_write(&self.pkt_rate, lp_output),
-            8 => info_write(&self.pkt_data, lp_output),
-            9 => info_write(&self.pkt_mode, lp_output),
+            7 => info_write(&self.packet_rate, lp_output),
+            8 => info_write(&self.packet_data, lp_output),
+            9 => info_write(&self.packet_mode, lp_output),
             10 => info_write(&self.move_mask, lp_output),
             11 => info_write(&self.btn_dn_mask, lp_output),
             12 => info_write(&self.btn_up_mask, lp_output),
@@ -582,7 +687,7 @@ impl WtiLogicalContext {
             32 => info_write(&self.sys_ext_y, lp_output),
             33 => info_write(&self.sys_sens_x, lp_output),
             34 => info_write(&self.sys_sens_y, lp_output),
-            _ => 0
+            _ => 0,
         }
     }
 }
@@ -610,13 +715,13 @@ impl Axis {
         Axis {
             min: 0,
             max: 65535,
-            units: TU_INCHES,
+            units: TU_NONE,
             resolution: 0x03e8_0000, // 1000.0000
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 /// The PACKET data structure is a flexible structure that contains tablet event information. Each of its fields is optional.
 /// The structure consists of a concatenation of the data items selected in the lcPktData field of the context that generated the packet.
@@ -625,7 +730,7 @@ impl Axis {
 /// This implementation just includes all the fields.
 pub struct Packet {
     /// Specifies the context that generated the event.
-    pub context: u32,//*mut c_void,
+    pub context: u32, //*mut c_void,
     /// Specifies various status and error conditions. These conditions can be combined by using the bitwise OR operator.
     /// The pkStatus field can be any combination of the status values.
     pub status: u32,
@@ -642,8 +747,8 @@ pub struct Packet {
     /// In relative mode, is a DWORD whose low word contains a button number,
     /// and whose high word contains one of the following codes (displayed with Value and Meaning):
     /// [TBN_NONE]: No change in button state.
-	/// [TBN_UP]: Button was released.
-	/// [TBN_DOWN]: Button was pressed.
+    /// [TBN_UP]: Button was released.
+    /// [TBN_DOWN]: Button was pressed.
     pub buttons: u32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the X axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
@@ -665,8 +770,99 @@ pub struct Packet {
     /// Contains updated cursor rotation information. (see [Rotation])
     pub rotation: Rotation,
 }
+impl Packet {
+    // TODO: make mask a bitfield (PK_CONTEXT and stuff too)
+    pub fn write(&self, start_ptr: *mut c_void, mask: u32) -> u32 {
+        let mut ptr = start_ptr;
+        if mask & PK_CONTEXT > 0 {
+            unsafe {
+                let written = copy(&self.context, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_STATUS > 0 {
+            unsafe {
+                let written = copy(&self.status, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_TIME > 0 {
+            unsafe {
+                let written = copy(&self.time, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_CHANGED > 0 {
+            unsafe {
+                let written = copy(&self.changed, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_SERIAL_NUMBER > 0 {
+            unsafe {
+                let written = copy(&self.serial, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_CURSOR > 0 {
+            unsafe {
+                let written = copy(&self.cursor, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_BUTTONS > 0 {
+            unsafe {
+                let written = copy(&self.buttons, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_X > 0 {
+            unsafe {
+                let written = copy(&self.x, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_Y > 0 {
+            unsafe {
+                let written = copy(&self.y, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_Z > 0 {
+            unsafe {
+                let written = copy(&self.z, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_NORMAL_PRESSURE > 0 {
+            unsafe {
+                let written = copy(&self.normal_pressure, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_TANGENT_PRESSURE > 0 {
+            unsafe {
+                let written = copy(&self.tangential_pressure, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_ORIENTATION > 0 {
+            unsafe {
+                let written = copy(&self.orientation, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        if mask & PK_ROTATION > 0 {
+            unsafe {
+                let written = copy(&self.rotation, ptr as *mut _, 1);
+                ptr = ptr.wrapping_add(written);
+            }
+        }
+        (ptr as usize - start_ptr as usize) as u32
+    }
+}
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[repr(C)]
 /// The ORIENTATION data structure specifies the orientation of the cursor with respect to the tablet.
 pub struct Orientation {
@@ -679,7 +875,7 @@ pub struct Orientation {
     pub twist: i32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[repr(C)]
 /// The ROTATION data structure specifies the Rotation of the cursor with respect to the tablet.
 pub struct Rotation {
@@ -717,4 +913,3 @@ impl WindowMessage {
         }
     }
 }
-
