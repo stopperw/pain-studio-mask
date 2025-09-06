@@ -55,7 +55,7 @@ pub fn main() -> color_eyre::Result<()> {
         *state = Some(PSM::new(config));
     }
 
-    info!("PSM is loaded!");
+    info!("PSM v{} is loaded!", env!("CARGO_PKG_VERSION"));
 
     std::thread::spawn(tcp_thread);
 
