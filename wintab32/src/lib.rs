@@ -6,7 +6,7 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use color_eyre::eyre::{ContextCompat, bail};
+use color_eyre::eyre::{ContextCompat, WrapErr, bail};
 use log::{debug, error, info};
 use static_init::{constructor, destructor};
 use windows::{
@@ -17,15 +17,16 @@ use windows::{
     },
 };
 
-use crate::ffi::*;
+use crate::{config::Config, ffi::*};
 use psm_common::netcode::{PSMPacketC2S, PSMPacketS2C};
 
+pub mod config;
 pub mod ffi;
 pub mod info_write;
 pub mod netcompat;
 pub mod ptr;
 
-static STATE: LazyLock<Mutex<PSM>> = LazyLock::new(|| Mutex::new(PSM::default()));
+static STATE: LazyLock<Mutex<Option<PSM>>> = LazyLock::new(|| Mutex::new(None));
 // static THREADS: LazyLock<Mutex<Vec<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 // static WE_SHOULD_DIE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
@@ -48,11 +49,19 @@ extern "C" fn free_main() {
 pub fn main() -> color_eyre::Result<()> {
     debug!("PSM debug");
 
-    // TODO: TCP socket
-    // TODO: config file
+    {
+        let mut file = std::fs::File::open("psm.json")
+            .wrap_err("config file (psm.json) wasn't found or couldn't be accessed")?;
+        let mut config_text = String::new();
+        file.read_to_string(&mut config_text)
+            .wrap_err("config is unreadable")?;
+        let config: Config = serde_json::from_str(&config_text).wrap_err("config parse failed")?;
+        let mut state = STATE.lock().unwrap();
+        *state = Some(PSM::new(config));
+    }
+
     info!("PSM is loaded!");
 
-    // TODO: kill? threads
     std::thread::spawn(tcp_thread);
     // let _ptthread = std::thread::spawn(move || {
     //     loop {
@@ -62,6 +71,7 @@ pub fn main() -> color_eyre::Result<()> {
     //         //     break;
     //         // }
     //         let mut state = STATE.lock().unwrap();
+    // let mut state = state.as_mut().unwrap();
     //         for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
     //             ctx.send_packet().ok();
     //         }
@@ -117,6 +127,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 tangential_pressure,
             } => {
                 let mut state = STATE.lock().unwrap();
+                let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     if let Err(err) = ctx.send_packet(Packet {
                         context: ctx.handle as u32,
@@ -140,6 +151,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
             }
             PSMPacketC2S::Proximity { value } => {
                 let mut state = STATE.lock().unwrap();
+                let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     if let Err(err) = ctx.proximity(value) {
                         error!("Couldn't send the proximity update! {:?}", err);
@@ -169,6 +181,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 sys_ext_y,
             } => {
                 let mut state = STATE.lock().unwrap();
+                let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     ctx.logical_context.status = status;
                     ctx.logical_context.packet_rate = packet_rate;
@@ -211,6 +224,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 rotation,
             } => {
                 let mut state = STATE.lock().unwrap();
+                let state = state.as_mut().unwrap();
                 state.device.hardware = hardware;
                 state.device.packet_rate = packet_rate;
                 state.device.packet_mode = packet_mode;
@@ -230,14 +244,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                     }
                 }
             }
-            PSMPacketC2S::Debug { msg } => {
-                let mut state = STATE.lock().unwrap();
-                for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| true) {
-                    if let Err(err) = ctx.brute() {
-                        error!("Couldn't send the info update! {:?}", err);
-                    }
-                }
-            }
+            PSMPacketC2S::Debug { msg: _ } => {}
         }
     }
     // Ok(())
@@ -256,16 +263,56 @@ pub struct PSM {
     pub default_context: WtiLogicalContext,
     pub device: WtiDevices,
     pub cursor: WtiCursors,
+    pub config: Config,
 }
-impl Default for PSM {
-    fn default() -> Self {
-        Self {
+impl PSM {
+    pub fn new(config: Config) -> Self {
+        let mut state = Self {
             contexts: Default::default(),
             counter: Default::default(),
             default_context: WtiLogicalContext::psm_default(),
             device: WtiDevices::psm_default(),
             cursor: WtiCursors::psm_default(),
-        }
+            config,
+        };
+        state.apply_config();
+        state
+    }
+
+    fn apply_config(&mut self) {
+        self.default_context.status = self.config.preset.status;
+        self.default_context.packet_rate = self.config.preset.packet_rate;
+        self.default_context.packet_mode = self.config.preset.packet_mode;
+        self.default_context.move_mask = self.config.preset.move_mask;
+        self.default_context.in_org_x = self.config.preset.in_org_x;
+        self.default_context.in_org_y = self.config.preset.in_org_y;
+        self.default_context.in_org_z = self.config.preset.in_org_z;
+        self.default_context.in_ext_x = self.config.preset.in_ext_x;
+        self.default_context.in_ext_y = self.config.preset.in_ext_y;
+        self.default_context.in_ext_z = self.config.preset.in_ext_z;
+        self.default_context.out_org_x = self.config.preset.out_org_x;
+        self.default_context.out_org_y = self.config.preset.out_org_y;
+        self.default_context.out_org_z = self.config.preset.out_org_z;
+        self.default_context.out_ext_x = self.config.preset.out_ext_x;
+        self.default_context.out_ext_y = self.config.preset.out_ext_y;
+        self.default_context.out_ext_z = self.config.preset.out_ext_z;
+        self.default_context.sys_org_x = self.config.preset.sys_org_x;
+        self.default_context.sys_org_y = self.config.preset.sys_org_y;
+        self.default_context.sys_ext_x = self.config.preset.sys_ext_x;
+        self.default_context.sys_ext_y = self.config.preset.sys_ext_y;
+        self.device.hardware = self.config.preset.hardware;
+        self.device.packet_rate = self.config.preset.packet_rate;
+        self.device.packet_mode = self.config.preset.packet_mode;
+        self.device.x_margin = self.config.preset.x_margin;
+        self.device.y_margin = self.config.preset.y_margin;
+        self.device.z_margin = self.config.preset.z_margin;
+        self.device.device_x = self.config.preset.device_x.into();
+        self.device.device_y = self.config.preset.device_y.into();
+        self.device.device_z = self.config.preset.device_z.into();
+        self.device.normal_pressure = self.config.preset.normal_pressure.into();
+        self.device.tangential_pressure = self.config.preset.tangential_pressure.into();
+        self.device.orientation = self.config.preset.orientation.map(|x| x.into());
+        self.device.rotation = self.config.preset.rotation.map(|x| x.into());
     }
 }
 
@@ -366,37 +413,7 @@ impl Context {
                 Some(self.window.0),
                 WindowMessage::InfoChange.value(self.logical_context.msg_base),
                 WPARAM(0),
-                LPARAM((WTI_DEFCONTEXT as isize) << 4),
-            )?;
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::InfoChange.value(self.logical_context.msg_base),
-                WPARAM(0),
-                LPARAM((WTI_DEFSYSCTX as isize) << 4),
-            )?;
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::InfoChange.value(self.logical_context.msg_base),
-                WPARAM(0),
-                LPARAM((WTI_DEVICES as isize) << 4),
-            )?;
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::InfoChange.value(self.logical_context.msg_base),
-                WPARAM(0),
-                LPARAM((WTI_CURSORS as isize) << 4),
-            )?;
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::InfoChange.value(self.logical_context.msg_base),
-                WPARAM(0),
-                LPARAM((WTI_DDCTXS as isize) << 4),
-            )?;
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::InfoChange.value(self.logical_context.msg_base),
-                WPARAM(0),
-                LPARAM((WTI_DSCTXS as isize) << 4),
+                LPARAM(0x10004),
             )?;
         };
         Ok(())
@@ -418,26 +435,6 @@ impl Context {
                 LPARAM(if value { 0x00010001 } else { 0 }),
             )?
         };
-        Ok(())
-    }
-
-    pub fn brute(&mut self) -> color_eyre::Result<()> {
-        if self.window.0.0 == std::ptr::null_mut() {
-            bail!("update sent without a valid window");
-        }
-        for c in 0..16isize {
-            for i in 0..16isize {
-                debug!("ic {:x}", i + (c << 16));
-                unsafe {
-                    PostMessageW(
-                        Some(self.window.0),
-                        WindowMessage::InfoChange.value(self.logical_context.msg_base),
-                        WPARAM(0),
-                        LPARAM((i + (c << 16)) as isize),
-                    )?
-                };
-            }
-        }
         Ok(())
     }
 }
@@ -470,6 +467,7 @@ pub extern "C" fn WTOpen(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enabl
     }
 
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     state.counter += 1;
 
     let handle = state.counter;
@@ -492,6 +490,7 @@ pub extern "C" fn WTOpen(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enabl
 pub extern "C" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
     debug!("WTEnable({:#?}, {})", ctx_id, enable);
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     let ctx = match state.contexts.get_mut(&ctx_id) {
         Some(ctx) => ctx,
         None => return false,
@@ -520,6 +519,7 @@ pub extern "C" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut c_void
 }
 pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
         .get_mut(&ctx_id)
@@ -556,6 +556,7 @@ pub extern "C" fn WTPacket(ctx_id: usize, serial: u32, ptr: *mut c_void) -> bool
 }
 pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Result<bool> {
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
         .get_mut(&ctx_id)
@@ -591,6 +592,7 @@ pub extern "C" fn WTClose(ctx_id: usize) -> bool {
 }
 pub fn close(ctx_id: usize) -> color_eyre::Result<bool> {
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     state.contexts.retain(|i, _| *i != ctx_id);
     Ok(true)
 }
@@ -715,6 +717,7 @@ pub extern "C" fn WTQueueSizeGet(ctx_id: usize) -> u32 {
 }
 pub fn queue_size_get(ctx_id: usize) -> color_eyre::Result<u32> {
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
         .get_mut(&ctx_id)
@@ -736,6 +739,7 @@ pub extern "C" fn WTQueueSizeSet(ctx_id: usize, num_packets: u32) -> bool {
 }
 pub fn queue_size_set(ctx_id: usize, num_packets: u32) -> color_eyre::Result<bool> {
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
         .get_mut(&ctx_id)
@@ -822,6 +826,7 @@ pub extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) 
 
 pub fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
     let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
     state.default_context.options =
         (if system { CXO_SYSTEM } else { 0 }) | CXO_MESSAGES | CXO_CSRMESSAGES;
     return state.default_context.handle_info(index, lp_output);
@@ -882,6 +887,7 @@ pub fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
 
 pub fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
     let state = STATE.lock().unwrap();
+    let state = state.as_ref().unwrap();
     return state.device.handle_info(index, lp_output);
     let mut ctx = WtiDevices::psm_default();
     ctx.hardware = HWC_HARDPROX | HWC_PHYSID_CURSORS;
@@ -955,5 +961,6 @@ pub fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
 
 pub fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
     let state = STATE.lock().unwrap();
+    let state = state.as_ref().unwrap();
     state.cursor.handle_info(index, lp_output)
 }

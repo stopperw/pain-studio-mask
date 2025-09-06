@@ -114,7 +114,7 @@ pub enum PSMPacketS2C {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 /// The AXIS data structure defines the range and resolution for many of the packet data items.
 pub struct Axis {
     /// Specifies the minimum value of the data item in the tablet's native coordinates.
