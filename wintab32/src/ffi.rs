@@ -588,7 +588,7 @@ impl WtiLogicalContext {
 
         WtiLogicalContext {
             name: wintabid,
-            options: CXO_SYSTEM | CXO_MESSAGES | CXO_CSRMESSAGES,
+            options: CXO_SYSTEM,
             status: 0,
             locks: 0,
             msg_base: WT_DEFBASE,

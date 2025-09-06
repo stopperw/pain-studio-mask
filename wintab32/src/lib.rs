@@ -816,10 +816,7 @@ pub extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) 
         WTI_CURSORS => handle_cursor(n_index, lp_output),
         // WTI_EXTENSIONS => todo!(),
         WTI_DDCTXS => handle_logctx(n_index, lp_output, false),
-        // WTI_DDCTXS => todo!(),
         WTI_DSCTXS => handle_logctx(n_index, lp_output, true),
-        // WTI_DSCTXS => todo!(),
-        // _ => unreachable!()
         _ => 0,
     }
 }
@@ -827,8 +824,7 @@ pub extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) 
 pub fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
     let mut state = STATE.lock().unwrap();
     let state = state.as_mut().unwrap();
-    state.default_context.options =
-        (if system { CXO_SYSTEM } else { 0 }) | CXO_MESSAGES | CXO_CSRMESSAGES;
+    state.default_context.options = (if system { CXO_SYSTEM } else { 0 });
     return state.default_context.handle_info(index, lp_output);
     let mut ctx = WtiLogicalContext::psm_default();
     // ctx.status = CXS_ONTOP;

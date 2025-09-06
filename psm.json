@@ -1,0 +1,98 @@
+{
+    "preset": {
+        "status": 0,
+        "packet_rate": 100,
+        "packet_mode": 0,
+        "move_mask": 4294967295,
+        "in_org_x": 0,
+        "in_org_y": 0,
+        "in_org_z": -1023,
+        "in_ext_x": 15200,
+        "in_ext_y": 9500,
+        "in_ext_z": 2047,
+        "out_org_x": 0,
+        "out_org_y": 0,
+        "out_org_z": -1023,
+        "out_ext_x": 15200,
+        "out_ext_y": 9500,
+        "out_ext_z": 2047,
+        "sys_org_x": 0,
+        "sys_org_y": 0,
+        "sys_ext_x": 1920,
+        "sys_ext_y": 1080,
+        "hardware": 12,
+        "x_margin": 0,
+        "y_margin": 0,
+        "z_margin": 0,
+        "device_x": {
+            "min": 0,
+            "max": 15200,
+            "units": 2,
+            "resolution": 65536000
+        },
+        "device_y": {
+            "min": 0,
+            "max": 9500,
+            "units": 2,
+            "resolution": 65536000
+        },
+        "device_z": {
+            "min": -1023,
+            "max": 1023,
+            "units": 2,
+            "resolution": 65536000
+        },
+        "normal_pressure": {
+            "min": 0,
+            "max": 32767,
+            "units": 0,
+            "resolution": 0
+        },
+        "tangential_pressure": {
+            "min": 0,
+            "max": 1023,
+            "units": 0,
+            "resolution": 0
+        },
+        "orientation": [
+            {
+                "min": 0,
+                "max": 65535,
+                "units": 0,
+                "resolution": 65536000
+            },
+            {
+                "min": 0,
+                "max": 65535,
+                "units": 0,
+                "resolution": 65536000
+            },
+            {
+                "min": 0,
+                "max": 65535,
+                "units": 0,
+                "resolution": 65536000
+            }
+        ],
+        "rotation": [
+            {
+                "min": 0,
+                "max": 65535,
+                "units": 0,
+                "resolution": 65536000
+            },
+            {
+                "min": 0,
+                "max": 65535,
+                "units": 0,
+                "resolution": 65536000
+            },
+            {
+                "min": 0,
+                "max": 65535,
+                "units": 0,
+                "resolution": 65536000
+            }
+        ]
+    }
+}
