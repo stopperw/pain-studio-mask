@@ -83,7 +83,15 @@ pub fn main() -> color_eyre::Result<()> {
 }
 
 pub fn tcp_thread() {
-    let socket = TcpListener::bind("127.0.0.1:40302").unwrap();
+    let socket = TcpListener::bind("127.0.0.1:40302");
+    let socket = match socket {
+        Ok(v) => v,
+        Err(err) => {
+            error!("{:?}", err);
+            error!("Failed to bind! PSM WILL NOT WORK.");
+            return;
+        }
+    };
     loop {
         info!("PSM is now listening on 127.0.0.1:40302");
         let stream = socket.accept();
