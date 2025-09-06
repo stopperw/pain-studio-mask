@@ -4,17 +4,15 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{LazyLock, Mutex},
+    time::Instant,
 };
 
 use color_eyre::eyre::{ContextCompat, WrapErr, bail};
 use log::{debug, error, info};
 use static_init::{constructor, destructor};
-use windows::{
-    // core::*,
-    Win32::{
-        Foundation::{HWND, LPARAM, WPARAM},
-        UI::WindowsAndMessaging::*,
-    },
+use windows::Win32::{
+    Foundation::{HWND, LPARAM, WPARAM},
+    UI::WindowsAndMessaging::*,
 };
 
 use crate::{config::Config, ffi::*};
@@ -27,8 +25,6 @@ pub mod netcompat;
 pub mod ptr;
 
 static STATE: LazyLock<Mutex<Option<PSM>>> = LazyLock::new(|| Mutex::new(None));
-// static THREADS: LazyLock<Mutex<Vec<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-// static WE_SHOULD_DIE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 #[constructor(0)]
 extern "C" fn init_main() {
@@ -42,7 +38,6 @@ extern "C" fn init_main() {
 
 #[destructor(0)]
 extern "C" fn free_main() {
-    // WE_SHOULD_DIE.store(true, std::sync::atomic::Ordering::Relaxed);
     info!("bye!");
 }
 
@@ -63,21 +58,6 @@ pub fn main() -> color_eyre::Result<()> {
     info!("PSM is loaded!");
 
     std::thread::spawn(tcp_thread);
-    // let _ptthread = std::thread::spawn(move || {
-    //     loop {
-    //         std::thread::sleep(std::time::Duration::from_secs(3));
-    //         debug!("tick");
-    //         // if WE_SHOULD_DIE.load(std::sync::atomic::Ordering::Relaxed) {
-    //         //     break;
-    //         // }
-    //         let mut state = STATE.lock().unwrap();
-    // let mut state = state.as_mut().unwrap();
-    //         for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
-    //             ctx.send_packet().ok();
-    //         }
-    //     }
-    // });
-    // THREADS.lock().unwrap().push(ptthread);
 
     Ok(())
 }
@@ -269,8 +249,8 @@ pub struct PSM {
     pub contexts: HashMap<usize, Context>,
     pub counter: usize,
     pub default_context: WtiLogicalContext,
-    pub device: WtiDevices,
-    pub cursor: WtiCursors,
+    pub device: WtiDevice,
+    pub cursor: WtiCursor,
     pub config: Config,
 }
 impl PSM {
@@ -279,8 +259,8 @@ impl PSM {
             contexts: Default::default(),
             counter: Default::default(),
             default_context: WtiLogicalContext::psm_default(),
-            device: WtiDevices::psm_default(),
-            cursor: WtiCursors::psm_default(),
+            device: WtiDevice::psm_default(),
+            cursor: WtiCursor::psm_default(),
             config,
         };
         state.apply_config();
@@ -332,6 +312,7 @@ pub struct Context {
     pub packets: VecDeque<Packet>,
     pub queue_size: usize,
     pub serial: usize,
+    pub time: Instant,
 }
 impl Context {
     pub fn new(handle: usize, enabled: bool) -> Self {
@@ -343,6 +324,7 @@ impl Context {
             packets: VecDeque::new(),
             queue_size: 1024,
             serial: 0,
+            time: Instant::now(),
         }
     }
 
@@ -350,30 +332,14 @@ impl Context {
         if !self.enabled {
             bail!("packet sent when context is disabled");
         }
-        if self.window.0.0 == std::ptr::null_mut() {
+        if self.window.0.0.is_null() {
             bail!("packet sent without a valid window");
         }
         self.serial += 1;
         packet.context = self.handle as u32;
         packet.serial = self.serial as u32;
         packet.orientation.altitude = 900;
-        packet.time = self.serial as u32;
-        // let packet = Packet {
-        //     context: self.handle as u32,
-        //     status: 0,
-        //     time: self.serial as u32,
-        //     changed: 0xFFFFFFFF,
-        //     serial: self.serial as u32,
-        //     cursor: 0,
-        //     buttons: 0b11111111_11111111_11111111_11111111,
-        //     x: 960,
-        //     y: 540,
-        //     z: 0,
-        //     normal_pressure: 65535,
-        //     tangential_pressure: 65535,
-        //     orientation: Orientation::default(),
-        //     rotation: Rotation::default(),
-        // };
+        packet.time = self.time.elapsed().as_millis() as u32;
         debug!("wtpacket: {:?}", packet);
         // TODO: limit queue size by queue_size
         self.packets.push_back(packet);
@@ -390,10 +356,7 @@ impl Context {
     }
 
     pub fn context_update(&mut self) -> color_eyre::Result<()> {
-        // if !self.enabled {
-        //     bail!("update sent when context is disabled");
-        // }
-        if self.window.0.0 == std::ptr::null_mut() {
+        if self.window.0.0.is_null() {
             bail!("update sent without a valid window");
         }
         // posting WT_CTXUPDATE(ctx_handle, status)
@@ -409,10 +372,7 @@ impl Context {
     }
 
     pub fn info_update(&mut self) -> color_eyre::Result<()> {
-        // if !self.enabled {
-        //     bail!("update sent when context is disabled");
-        // }
-        if self.window.0.0 == std::ptr::null_mut() {
+        if self.window.0.0.is_null() {
             bail!("update sent without a valid window");
         }
         // posting WT_INFOCHANGE(0, categoryAndIndex)
@@ -431,7 +391,7 @@ impl Context {
         if !self.enabled {
             bail!("packet sent when context is disabled");
         }
-        if self.window.0.0 == std::ptr::null_mut() {
+        if self.window.0.0.is_null() {
             bail!("packet sent without a valid window");
         }
         // posting WT_PROXIMITY(ctx_handle, value)
@@ -453,25 +413,36 @@ unsafe impl Send for ThreadHWND {}
 unsafe impl Sync for ThreadHWND {}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTOpenA(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enable: bool) -> usize {
+pub unsafe extern "C" fn WTOpenA(
+    hwnd: HWND,
+    lp_log_ctx: *mut WtiLogicalContext,
+    f_enable: bool,
+) -> usize {
     debug!("WTOpenA({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    WTOpen(hwnd, lp_log_ctx, f_enable)
+    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTOpenW(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enable: bool) -> usize {
+pub unsafe extern "C" fn WTOpenW(
+    hwnd: HWND,
+    lp_log_ctx: *mut WtiLogicalContext,
+    f_enable: bool,
+) -> usize {
     debug!("WTOpenW({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    WTOpen(hwnd, lp_log_ctx, f_enable)
+    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTOpen(hwnd: HWND, lp_log_ctx: *mut WtiLogicalContext, f_enable: bool) -> usize {
+pub unsafe extern "C" fn WTOpen(
+    hwnd: HWND,
+    lp_log_ctx: *mut WtiLogicalContext,
+    f_enable: bool,
+) -> usize {
     debug!("WTOpen({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    if lp_log_ctx == std::ptr::null_mut() {
+    if lp_log_ctx.is_null() {
         error!("WTOpen lp_log_ctx is null");
         return 0;
     }
     unsafe {
         debug!("LogContext -> {:#?}", *lp_log_ctx);
-        // std::ptr::copy(lp_log_ctx, &mut logical_context, 1);
     }
 
     let mut state = STATE.lock().unwrap();
@@ -575,7 +546,6 @@ pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Resul
         None => return Ok(false),
     };
     packet.write(ptr, ctx.logical_context.packet_data);
-    // info_write(packet, ptr);
     ctx.packets.retain_mut(|x| x.serial > serial);
     Ok(true)
 }
@@ -798,177 +768,58 @@ pub extern "C" fn WTMgrPacketHookDefProc(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTInfoA(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe extern "C" fn WTInfoA(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
     debug!("WTInfoA({}, {}, {:#?});", w_category, n_index, lp_output);
-    WTInfo(w_category, n_index, lp_output)
+    unsafe { WTInfo(w_category, n_index, lp_output) }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTInfoW(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
-    // THERE IS A SEGFAULT HAPPENING (only in wtinfo.exe as far as i can tell)
+pub unsafe extern "C" fn WTInfoW(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+    // TODO: THERE IS A SEGFAULT HAPPENING (only in wtinfo.exe as far as i can tell)
     // THIS info! IS THE FIX (or RUST_LOG=debug)
     // WHAT
     // info!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     debug!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
-    WTInfo(w_category, n_index, lp_output)
+    unsafe { WTInfo(w_category, n_index, lp_output) }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
     debug!("WTInfo({}, {}, {:#?});", w_category, n_index, lp_output);
 
-    match w_category {
-        // If the wCategory argument is zero, the function copies no data to the output buffer,
-        // but returns the size in bytes of the buffer necessary to hold the largest complete category.
-        0 => size_of::<WtiLogicalContext>() as u32,
-        WTI_INTERFACE => WtiInterface::psm_default().handle_info(n_index, lp_output),
+    unsafe {
+        match w_category {
+            // If the wCategory argument is zero, the function copies no data to the output buffer,
+            // but returns the size in bytes of the buffer necessary to hold the largest complete category.
+            0 => size_of::<WtiLogicalContext>() as u32,
+            WTI_INTERFACE => WtiInterface::psm_default().handle_info(n_index, lp_output),
 
-        WTI_DEFCONTEXT => handle_logctx(n_index, lp_output, false),
-        WTI_DEFSYSCTX => handle_logctx(n_index, lp_output, true),
-        // WTI_STATUS => todo!(),
-        WTI_DEVICES => handle_device(n_index, lp_output),
-        WTI_CURSORS => handle_cursor(n_index, lp_output),
-        // WTI_EXTENSIONS => todo!(),
-        WTI_DDCTXS => handle_logctx(n_index, lp_output, false),
-        WTI_DSCTXS => handle_logctx(n_index, lp_output, true),
-        _ => 0,
+            WTI_DEFCONTEXT => handle_logctx(n_index, lp_output, false),
+            WTI_DEFSYSCTX => handle_logctx(n_index, lp_output, true),
+            // WTI_STATUS => todo!(),
+            WTI_DEVICES => handle_device(n_index, lp_output),
+            WTI_CURSORS => handle_cursor(n_index, lp_output),
+            // WTI_EXTENSIONS => todo!(),
+            WTI_DDCTXS => handle_logctx(n_index, lp_output, false),
+            WTI_DSCTXS => handle_logctx(n_index, lp_output, true),
+            _ => 0,
+        }
     }
 }
 
-pub fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
+pub unsafe fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
     let mut state = STATE.lock().unwrap();
     let state = state.as_mut().unwrap();
-    state.default_context.options = (if system { CXO_SYSTEM } else { 0 });
-    return state.default_context.handle_info(index, lp_output);
-    let mut ctx = WtiLogicalContext::psm_default();
-    // ctx.status = CXS_ONTOP;
-    if system {
-        ctx.options = CXO_SYSTEM;
-    }
-    ctx.packet_data = PK_CONTEXT
-        | PK_STATUS
-        | PK_TIME
-        | PK_CHANGED
-        | PK_SERIAL_NUMBER
-        | PK_CURSOR
-        | PK_BUTTONS
-        | PK_X
-        | PK_Y
-        | PK_Z
-        | PK_NORMAL_PRESSURE
-        | PK_TANGENT_PRESSURE
-        | PK_ORIENTATION
-        | PK_ROTATION;
-    ctx.move_mask = PK_CONTEXT
-        | PK_STATUS
-        | PK_TIME
-        | PK_CHANGED
-        | PK_SERIAL_NUMBER
-        | PK_CURSOR
-        | PK_BUTTONS
-        | PK_X
-        | PK_Y
-        | PK_Z
-        | PK_NORMAL_PRESSURE
-        | PK_TANGENT_PRESSURE
-        | PK_ORIENTATION
-        | PK_ROTATION;
-    // ctx.move_mask = PK_BUTTONS | PK_X | PK_Y | PK_Z | PK_NORMAL_PRESSURE | PK_ORIENTATION;
-    ctx.btn_dn_mask = 0xFFFFFFFF;
-    ctx.btn_up_mask = 0xFFFFFFFF;
-
-    ctx.in_org_z = -1023;
-    ctx.in_ext_x = 15200;
-    ctx.in_ext_y = 9500;
-    ctx.in_ext_z = 2047;
-    ctx.out_org_z = -1023;
-    ctx.out_ext_x = 15200;
-    ctx.out_ext_y = 9500;
-    ctx.out_ext_z = 2047;
-    ctx.out_sens_x = 0x00010000;
-    ctx.out_sens_y = 0x00010000;
-    ctx.out_sens_z = 0x00010000;
-    ctx.sys_ext_x = 1920;
-    ctx.sys_ext_y = 1080;
-    ctx.sys_sens_x = 0x00010000;
-    ctx.sys_sens_y = 0x00010000;
-    ctx.handle_info(index, lp_output)
+    state.default_context.options = if system { CXO_SYSTEM } else { 0 };
+    unsafe { state.default_context.handle_info(index, lp_output) }
 }
 
-pub fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
     let state = STATE.lock().unwrap();
     let state = state.as_ref().unwrap();
-    return state.device.handle_info(index, lp_output);
-    let mut ctx = WtiDevices::psm_default();
-    ctx.hardware = HWC_HARDPROX | HWC_PHYSID_CURSORS;
-    ctx.packet_data = PK_CONTEXT
-        | PK_STATUS
-        | PK_TIME
-        | PK_CHANGED
-        | PK_SERIAL_NUMBER
-        | PK_CURSOR
-        | PK_BUTTONS
-        | PK_X
-        | PK_Y
-        | PK_Z
-        | PK_NORMAL_PRESSURE
-        | PK_TANGENT_PRESSURE
-        | PK_ORIENTATION
-        | PK_ROTATION;
-
-    // DVC_X                          { 16} { 16} {min=0;max=15199;units=2 [CENTIMETERS];res=0x03e80000 [1000.0]}
-    // DVC_Y                          { 16} { 16} {min=0;max=9499;units=2 [CENTIMETERS];res=0x03e80000 [1000.0]}
-    // DVC_Z                          { 16} { 16} {min=-1023;max=1023;units=2 [CENTIMETERS];res=0x03e80000 [1000.0]}
-    ctx.device_x.max = 15199;
-    ctx.device_x.units = TU_CENTIMETERS;
-    ctx.device_x.resolution = 0x03e80000; // 1000.0
-    ctx.device_y.max = 9499;
-    ctx.device_y.units = TU_CENTIMETERS;
-    ctx.device_y.resolution = 0x03e80000; // 1000.0
-    ctx.device_z.min = -1023;
-    ctx.device_z.max = 1023;
-    ctx.device_z.units = TU_CENTIMETERS;
-    ctx.device_z.resolution = 0x03e80000; // 1000.0
-
-    // ctx.device_x.max = 2048;
-    // // ctx.device_x.resolution = 0x00010000;
-    // ctx.device_x.resolution = 0x03e80000;
-    // ctx.device_y.max = 2048;
-    // // ctx.device_y.resolution = 0x00010000;
-    // ctx.device_y.resolution = 0x03e80000;
-    // ctx.device_z.max = 2048;
-    // // ctx.device_z.resolution = 0x00010000;
-    // ctx.device_z.resolution = 0x03e80000;
-    ctx.normal_pressure.max = 32767;
-    ctx.normal_pressure.units = TU_NONE;
-    ctx.normal_pressure.resolution = 0;
-    // ctx.tangential_pressure.max = 32767;
-    ctx.tangential_pressure.max = 1023;
-    ctx.tangential_pressure.units = TU_NONE;
-    ctx.tangential_pressure.resolution = 0;
-    ctx.orientation = [
-        Axis {
-            min: 0,
-            max: 3600,
-            units: TU_CIRCLE,
-            resolution: 0x0e100000,
-        },
-        Axis {
-            min: -1000,
-            max: 1000,
-            units: TU_CIRCLE,
-            resolution: 0x0e100000,
-        },
-        Axis {
-            min: 0,
-            max: 3600,
-            units: TU_CIRCLE,
-            resolution: 0x0e100000,
-        },
-    ];
-    ctx.handle_info(index, lp_output)
+    unsafe { state.device.handle_info(index, lp_output) }
 }
 
-pub fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
     let state = STATE.lock().unwrap();
     let state = state.as_ref().unwrap();
-    state.cursor.handle_info(index, lp_output)
+    unsafe { state.cursor.handle_info(index, lp_output) }
 }

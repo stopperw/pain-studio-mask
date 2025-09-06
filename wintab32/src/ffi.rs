@@ -51,8 +51,6 @@ pub const PK_TANGENT_PRESSURE: u32 = 0x0800;
 pub const PK_ORIENTATION: u32 = 0x1000;
 /// Rotation info (added in spec 1.1)
 pub const PK_ROTATION: u32 = 0x2000;
-// ROTNZYXBCNCTSC
-// 01010111100100
 
 // Context option values
 pub const CXO_SYSTEM: u32 = 0x0001;
@@ -86,7 +84,12 @@ pub const TPS_GRAB: u32 = 0x0008;
 // Specifies that the cursor is in its inverted state. (added in spec 1.1)
 pub const TPS_INVERT: u32 = 0x0010;
 
-pub const INTERFACE_WINTABID_LEN: usize = 34;
+// TODO: make structs more Rust-y and make a custom writer
+// for them, instead of limiting to static sizes.
+// Something like what is done to [Packet],
+// then we can have dynamic names for everything.
+
+pub const INTERFACE_WINTABID_LEN: usize = 33; // 16 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
 pub struct WtiInterface {
     /// Returns a copy of the null-terminated tablet hardware identification string in the user buffer.
@@ -126,9 +129,12 @@ impl WtiInterface {
                 break;
             }
             wintabid[i] = wintabids[u16i] as u8;
-            wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
+            if i + 1 == wintabid.len() {
+                break;
+            }
+            wintabid[i + 1] = (wintabids[u16i] >> 8) as u8;
         }
-        // println!("{:#?}", wintabid);
+        // debug!("{:#?}", wintabid);
 
         WtiInterface {
             wintabid,
@@ -136,29 +142,31 @@ impl WtiInterface {
             impl_version: 0b00000000_00000001,
             num_devices: 1,
             num_cursors: 1,
-            num_contexts: 1,
+            num_contexts: 16,
             ctx_options: 0,
             ctx_save_size: 0,
-            num_extensions: 1,
-            num_managers: 1,
+            num_extensions: 0,
+            num_managers: 0,
         }
     }
 
-    pub fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
-        match index {
-            0 => info_write(self, lp_output),
-            1 => info_write_array(&self.wintabid, lp_output, INTERFACE_WINTABID_LEN),
-            // 1 => info_write(&self.wintabid, lp_output),
-            2 => info_write(&self.spec_version, lp_output),
-            3 => info_write(&self.impl_version, lp_output),
-            4 => info_write(&self.num_devices, lp_output),
-            5 => info_write(&self.num_cursors, lp_output),
-            6 => info_write(&self.num_contexts, lp_output),
-            7 => info_write(&self.ctx_options, lp_output),
-            8 => info_write(&self.ctx_save_size, lp_output),
-            9 => info_write(&self.num_extensions, lp_output),
-            10 => info_write(&self.num_managers, lp_output),
-            _ => 0,
+    pub unsafe fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
+        unsafe {
+            match index {
+                0 => info_write(self, lp_output),
+                1 => info_write_array(&self.wintabid, lp_output, INTERFACE_WINTABID_LEN),
+                // 1 => info_write(&self.wintabid, lp_output),
+                2 => info_write(&self.spec_version, lp_output),
+                3 => info_write(&self.impl_version, lp_output),
+                4 => info_write(&self.num_devices, lp_output),
+                5 => info_write(&self.num_cursors, lp_output),
+                6 => info_write(&self.num_contexts, lp_output),
+                7 => info_write(&self.ctx_options, lp_output),
+                8 => info_write(&self.ctx_save_size, lp_output),
+                9 => info_write(&self.num_extensions, lp_output),
+                10 => info_write(&self.num_managers, lp_output),
+                _ => 0,
+            }
         }
     }
 }
@@ -168,11 +176,11 @@ pub const HWC_TOUCH: u32 = 0x0002;
 pub const HWC_HARDPROX: u32 = 0x0004;
 pub const HWC_PHYSID_CURSORS: u32 = 0x0008;
 
-pub const DEVICES_NAME_LEN: usize = 256;
+pub const DEVICE_NAME_LEN: usize = 15; // 7 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
-pub struct WtiDevices {
+pub struct WtiDevice {
     /// Returns a displayable null-terminated string describing the device, manufacturer, and revision level.
-    pub name: [u8; DEVICES_NAME_LEN],
+    pub name: [u8; DEVICE_NAME_LEN],
     /// Returns flags indicating hardware and driver capabilities, as defined below:
     /// [HWC_INTEGRATED]: Indicates that the display and digitizer share the same surface.
     /// [HWC_TOUCH]: Indicates that the cursor must be in physical contact with the device to report position.
@@ -216,26 +224,28 @@ pub struct WtiDevices {
     /// Null-terminated string containing the device’s Plug and Play ID.
     pub pnp_id: [u8; 8],
 }
-impl WtiDevices {
+impl WtiDevice {
     pub fn psm_default() -> Self {
-        // let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
-        // let mut wintabid = [0u8; DEVICES_NAME_LEN];
-        let wintabid = [0u8; DEVICES_NAME_LEN];
-        // for i in 0..DEVICES_NAME_LEN {
-        //     if i % 2 == 1 {
-        //         continue;
-        //     }
-        //     let u16i = i / 2;
-        //     if wintabids.len() <= u16i {
-        //         break;
-        //     }
-        //     wintabid[i] = wintabids[u16i] as u8;
-        //     wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
-        // }
-        // println!("{:#?}", wintabid);
+        let name_string = "PSMDEV1".encode_utf16().collect::<Vec<u16>>();
+        let mut name = [0u8; DEVICE_NAME_LEN];
+        for i in 0..DEVICE_NAME_LEN {
+            if i % 2 == 1 {
+                continue;
+            }
+            let u16i = i / 2;
+            if name_string.len() <= u16i {
+                break;
+            }
+            name[i] = name_string[u16i] as u8;
+            if i + 1 == name.len() {
+                break;
+            }
+            name[i + 1] = (name_string[u16i] >> 8) as u8;
+        }
+        // debug!("{:#?}", wintabid);
 
-        WtiDevices {
-            name: wintabid,
+        WtiDevice {
+            name,
             hardware: HWC_HARDPROX | HWC_PHYSID_CURSORS,
             num_cursor_types: 0,
             first_cursor_type: 0,
@@ -318,31 +328,33 @@ impl WtiDevices {
         }
     }
 
-    pub fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
-        match index {
-            0 => info_write(self, lp_output),
-            // TODO: replace with non-array version??
-            // 1 => info_write_array(&self.name, lp_output, DEVICES_NAME_LEN),
-            1 => info_write(&self.name, lp_output),
-            2 => info_write(&self.hardware, lp_output),
-            3 => info_write(&self.num_cursor_types, lp_output),
-            4 => info_write(&self.first_cursor_type, lp_output),
-            5 => info_write(&self.packet_rate, lp_output),
-            6 => info_write(&self.packet_data, lp_output),
-            7 => info_write(&self.packet_mode, lp_output),
-            8 => info_write(&self.csr_data, lp_output),
-            9 => info_write(&self.x_margin, lp_output),
-            10 => info_write(&self.y_margin, lp_output),
-            11 => info_write(&self.z_margin, lp_output),
-            12 => info_write(&self.device_x, lp_output),
-            13 => info_write(&self.device_y, lp_output),
-            14 => info_write(&self.device_z, lp_output),
-            15 => info_write(&self.normal_pressure, lp_output),
-            16 => info_write(&self.tangential_pressure, lp_output),
-            17 => info_write(&self.orientation, lp_output),
-            18 => info_write(&self.rotation, lp_output),
-            19 => info_write_array(&self.pnp_id, lp_output, 8),
-            _ => 0,
+    pub unsafe fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
+        unsafe {
+            match index {
+                0 => info_write(self, lp_output),
+                // TODO: replace with non-array version??
+                // 1 => info_write_array(&self.name, lp_output, DEVICES_NAME_LEN),
+                1 => info_write(&self.name, lp_output),
+                2 => info_write(&self.hardware, lp_output),
+                3 => info_write(&self.num_cursor_types, lp_output),
+                4 => info_write(&self.first_cursor_type, lp_output),
+                5 => info_write(&self.packet_rate, lp_output),
+                6 => info_write(&self.packet_data, lp_output),
+                7 => info_write(&self.packet_mode, lp_output),
+                8 => info_write(&self.csr_data, lp_output),
+                9 => info_write(&self.x_margin, lp_output),
+                10 => info_write(&self.y_margin, lp_output),
+                11 => info_write(&self.z_margin, lp_output),
+                12 => info_write(&self.device_x, lp_output),
+                13 => info_write(&self.device_y, lp_output),
+                14 => info_write(&self.device_z, lp_output),
+                15 => info_write(&self.normal_pressure, lp_output),
+                16 => info_write(&self.tangential_pressure, lp_output),
+                17 => info_write(&self.orientation, lp_output),
+                18 => info_write(&self.rotation, lp_output),
+                19 => info_write_array(&self.pnp_id, lp_output, 8),
+                _ => 0,
+            }
         }
     }
 }
@@ -351,13 +363,12 @@ pub const CRC_MULTIMODE: u32 = 0x0001;
 pub const CRC_AGGREGATE: u32 = 0x0002;
 pub const CRC_INVERT: u32 = 0x0004;
 
-pub const CURSORS_NAME_LEN: usize = 256;
+pub const CURSOR_NAME_LEN: usize = 15; // 7 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
-pub struct WtiCursors {
-    /// Returns a displayable zero-terminated string containing the name of the cursor.
-    pub name: [u8; CURSORS_NAME_LEN],
-    /// Returns whether the cursor is currently connected.
-    /// BUT ITS 4 BYTES???
+pub struct WtiCursor {
+    /// Returns a displayable null-terminated string containing the name of the cursor.
+    pub name: [u8; CURSOR_NAME_LEN],
+    /// Returns whether the cursor is currently connected. Acts like a bool.
     pub active: u32,
     /// (WTPKT) Returns a bit mask indicating the packet data items supported when this cursor is connected.
     pub packet_data: u32,
@@ -365,7 +376,7 @@ pub struct WtiCursors {
     pub buttons: u8,
     /// Returns the number of bits of raw button data returned by the hardware.
     pub button_bits: u8,
-    /// Returns a list of zero-terminated strings containing the names of the cursor's buttons.
+    /// Returns a list of null-terminated strings containing the names of the cursor's buttons.
     /// The number of names in the list is the same as the number of buttons on the cursor.
     /// The names are separated by a single zero character; the list is terminated by two zero characters.
     /// Replaced by a single u8 to zero it out.
@@ -405,31 +416,33 @@ pub struct WtiCursors {
     /// [CRC_INVERT]: Indicates this cursor type describes the physical cursor in its inverted orientation; the previous consecutive cursor type category describes the normal orientation.
     pub capabilities: u32,
 }
-impl WtiCursors {
+impl WtiCursor {
     pub fn psm_default() -> Self {
-        // let wintabids = "PAIN STUDIO MASK".encode_utf16().collect::<Vec<u16>>();
-        // let mut wintabid = [0u8; CURSORS_NAME_LEN];
-        let wintabid = [0u8; CURSORS_NAME_LEN];
-        // for i in 0..CURSORS_NAME_LEN {
-        //     if i % 2 == 1 {
-        //         continue;
-        //     }
-        //     let u16i = i / 2;
-        //     if wintabids.len() <= u16i {
-        //         break;
-        //     }
-        //     wintabid[i] = wintabids[u16i] as u8;
-        //     wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
-        // }
-        // println!("{:#?}", wintabid);
+        let name_string = "PSMCUR1".encode_utf16().collect::<Vec<u16>>();
+        let mut name = [0u8; CURSOR_NAME_LEN];
+        for i in 0..CURSOR_NAME_LEN {
+            if i % 2 == 1 {
+                continue;
+            }
+            let u16i = i / 2;
+            if name_string.len() <= u16i {
+                break;
+            }
+            name[i] = name_string[u16i] as u8;
+            if i + 1 == name.len() {
+                break;
+            }
+            name[i + 1] = (name_string[u16i] >> 8) as u8;
+        }
+        // debug!("{:#?}", wintabid);
 
-        let mut defr: [u32; 256] = [0u32; 256];
-        for i in 0..256 {
-            defr[i] = (i + 1) as u32;
+        let mut response_graph: [u32; 256] = [0u32; 256];
+        for (i, v) in response_graph.iter_mut().enumerate() {
+            *v = (i + 1) as u32;
         }
 
-        WtiCursors {
-            name: wintabid,
+        WtiCursor {
+            name,
             active: 0xFFFFFFFF,
             packet_data: PK_CONTEXT
                 | PK_STATUS
@@ -452,10 +465,10 @@ impl WtiCursors {
             system_button_map: [0u8; 32],
             physical_button: 0,
             npbtnmarks: [0, 1],
-            npresponse: defr.clone(), //[0, 0],
+            npresponse: response_graph, // [0, 0],
             tangential_button: 1,
             tpbtnmarks: [0, 1],
-            tpresponse: defr, //[0, 0],
+            tpresponse: response_graph, // [0, 0],
             physical_id: 0,
             csr_mode: 0,
             minpktdata: 0,
@@ -464,29 +477,31 @@ impl WtiCursors {
         }
     }
 
-    pub fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
-        match index {
-            0 => info_write(self, lp_output),
-            1 => info_write_array(&self.name, lp_output, DEVICES_NAME_LEN),
-            2 => info_write(&self.active, lp_output),
-            3 => info_write(&self.packet_data, lp_output),
-            4 => info_write(&self.buttons, lp_output),
-            5 => info_write(&self.button_bits, lp_output),
-            6 => 0, //info_write(&self.button_names, lp_output),
-            7 => 0, //info_write(&self.button_map, lp_output),
-            8 => 0, //info_write(&self.system_button_map, lp_output),
-            9 => info_write(&self.physical_button, lp_output),
-            10 => 0, //info_write(&self.npbtnmarks, lp_output),
-            11 => 0, //info_write(&self.npresponse, lp_output),
-            12 => info_write(&self.tangential_button, lp_output),
-            13 => 0, //info_write(&self.tpbtnmarks, lp_output),
-            14 => 0, //info_write(&self.tpresponse, lp_output),
-            15 => info_write(&self.physical_id, lp_output),
-            16 => info_write(&self.csr_mode, lp_output),
-            17 => 0, //info_write(&self.minpktdata, lp_output),
-            18 => 0, //info_write(&self.min_buttons, lp_output),
-            19 => info_write(&self.capabilities, lp_output),
-            _ => 0,
+    pub unsafe fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
+        unsafe {
+            match index {
+                0 => info_write(self, lp_output),
+                1 => info_write_array(&self.name, lp_output, DEVICE_NAME_LEN),
+                2 => info_write(&self.active, lp_output),
+                3 => info_write(&self.packet_data, lp_output),
+                4 => info_write(&self.buttons, lp_output),
+                5 => info_write(&self.button_bits, lp_output),
+                6 => 0, //info_write(&self.button_names, lp_output),
+                7 => 0, //info_write(&self.button_map, lp_output),
+                8 => 0, //info_write(&self.system_button_map, lp_output),
+                9 => info_write(&self.physical_button, lp_output),
+                10 => 0, //info_write(&self.npbtnmarks, lp_output),
+                11 => 0, //info_write(&self.npresponse, lp_output),
+                12 => info_write(&self.tangential_button, lp_output),
+                13 => 0, //info_write(&self.tpbtnmarks, lp_output),
+                14 => 0, //info_write(&self.tpresponse, lp_output),
+                15 => info_write(&self.physical_id, lp_output),
+                16 => info_write(&self.csr_mode, lp_output),
+                17 => 0, //info_write(&self.minpktdata, lp_output),
+                18 => 0, //info_write(&self.min_buttons, lp_output),
+                19 => info_write(&self.capabilities, lp_output),
+                _ => 0,
+            }
         }
     }
 }
@@ -495,8 +510,8 @@ pub const LOGICAL_CONTEXT_NAMELEN: usize = 80;
 #[derive(Debug)]
 #[repr(C, align(4))]
 pub struct WtiLogicalContext {
-    /// Returns a 40 character array containing the default name in UTF-16.
-    /// The name may occupy zero to 39 characters; the remainder of the array is padded with zeroes.
+    /// Returns a 40 character array (=80 bytes) containing the default name in UTF-16.
+    /// The name may occupy 0-39 characters; the remainder of the array is padded with zeroes.
     pub name: [u8; LOGICAL_CONTEXT_NAMELEN],
     /// Returns option flags.
     /// For the default digitizing context, CXO_MARGIN and CXO_MGNINSIDE are allowed.
@@ -571,23 +586,26 @@ pub struct WtiLogicalContext {
 }
 impl WtiLogicalContext {
     pub fn psm_default() -> Self {
-        let wintabids = "LOGCTX".encode_utf16().collect::<Vec<u16>>();
-        let mut wintabid = [0u8; LOGICAL_CONTEXT_NAMELEN];
+        let name_string = "LOGCTX".encode_utf16().collect::<Vec<u16>>();
+        let mut name = [0u8; LOGICAL_CONTEXT_NAMELEN];
         for i in 0..LOGICAL_CONTEXT_NAMELEN {
             if i % 2 == 1 {
                 continue;
             }
             let u16i = i / 2;
-            if wintabids.len() <= u16i {
+            if name_string.len() <= u16i {
                 break;
             }
-            wintabid[i] = wintabids[u16i] as u8;
-            wintabid[i + 1] = (wintabids[u16i] << 8) as u8;
+            name[i] = name_string[u16i] as u8;
+            if i + 1 == name.len() {
+                break;
+            }
+            name[i + 1] = (name_string[u16i] >> 8) as u8;
         }
-        // println!("{:#?}", wintabid);
+        // debug!("{:#?}", wintabid);
 
         WtiLogicalContext {
-            name: wintabid,
+            name,
             options: CXO_SYSTEM,
             status: 0,
             locks: 0,
@@ -650,44 +668,46 @@ impl WtiLogicalContext {
         }
     }
 
-    pub fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
-        match index {
-            0 => info_write(self, lp_output),
-            1 => info_write_array(&self.name, lp_output, LOGICAL_CONTEXT_NAMELEN),
-            2 => info_write(&self.options, lp_output),
-            3 => info_write(&self.status, lp_output),
-            4 => info_write(&self.locks, lp_output),
-            5 => info_write(&self.msg_base, lp_output),
-            6 => info_write(&self.device, lp_output),
-            7 => info_write(&self.packet_rate, lp_output),
-            8 => info_write(&self.packet_data, lp_output),
-            9 => info_write(&self.packet_mode, lp_output),
-            10 => info_write(&self.move_mask, lp_output),
-            11 => info_write(&self.btn_dn_mask, lp_output),
-            12 => info_write(&self.btn_up_mask, lp_output),
-            13 => info_write(&self.in_org_x, lp_output),
-            14 => info_write(&self.in_org_y, lp_output),
-            15 => info_write(&self.in_org_z, lp_output),
-            16 => info_write(&self.in_ext_x, lp_output),
-            17 => info_write(&self.in_ext_y, lp_output),
-            18 => info_write(&self.in_ext_z, lp_output),
-            19 => info_write(&self.out_org_x, lp_output),
-            20 => info_write(&self.out_org_y, lp_output),
-            21 => info_write(&self.out_org_z, lp_output),
-            22 => info_write(&self.out_ext_x, lp_output),
-            23 => info_write(&self.out_ext_y, lp_output),
-            24 => info_write(&self.out_ext_z, lp_output),
-            25 => info_write(&self.out_sens_x, lp_output),
-            26 => info_write(&self.out_sens_y, lp_output),
-            27 => info_write(&self.out_sens_z, lp_output),
-            28 => info_write(&self.sys_mode, lp_output),
-            29 => info_write(&self.sys_org_x, lp_output),
-            30 => info_write(&self.sys_org_y, lp_output),
-            31 => info_write(&self.sys_ext_x, lp_output),
-            32 => info_write(&self.sys_ext_y, lp_output),
-            33 => info_write(&self.sys_sens_x, lp_output),
-            34 => info_write(&self.sys_sens_y, lp_output),
-            _ => 0,
+    pub unsafe fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
+        unsafe {
+            match index {
+                0 => info_write(self, lp_output),
+                1 => info_write_array(&self.name, lp_output, LOGICAL_CONTEXT_NAMELEN),
+                2 => info_write(&self.options, lp_output),
+                3 => info_write(&self.status, lp_output),
+                4 => info_write(&self.locks, lp_output),
+                5 => info_write(&self.msg_base, lp_output),
+                6 => info_write(&self.device, lp_output),
+                7 => info_write(&self.packet_rate, lp_output),
+                8 => info_write(&self.packet_data, lp_output),
+                9 => info_write(&self.packet_mode, lp_output),
+                10 => info_write(&self.move_mask, lp_output),
+                11 => info_write(&self.btn_dn_mask, lp_output),
+                12 => info_write(&self.btn_up_mask, lp_output),
+                13 => info_write(&self.in_org_x, lp_output),
+                14 => info_write(&self.in_org_y, lp_output),
+                15 => info_write(&self.in_org_z, lp_output),
+                16 => info_write(&self.in_ext_x, lp_output),
+                17 => info_write(&self.in_ext_y, lp_output),
+                18 => info_write(&self.in_ext_z, lp_output),
+                19 => info_write(&self.out_org_x, lp_output),
+                20 => info_write(&self.out_org_y, lp_output),
+                21 => info_write(&self.out_org_z, lp_output),
+                22 => info_write(&self.out_ext_x, lp_output),
+                23 => info_write(&self.out_ext_y, lp_output),
+                24 => info_write(&self.out_ext_z, lp_output),
+                25 => info_write(&self.out_sens_x, lp_output),
+                26 => info_write(&self.out_sens_y, lp_output),
+                27 => info_write(&self.out_sens_z, lp_output),
+                28 => info_write(&self.sys_mode, lp_output),
+                29 => info_write(&self.sys_org_x, lp_output),
+                30 => info_write(&self.sys_org_y, lp_output),
+                31 => info_write(&self.sys_ext_x, lp_output),
+                32 => info_write(&self.sys_ext_y, lp_output),
+                33 => info_write(&self.sys_sens_x, lp_output),
+                34 => info_write(&self.sys_sens_y, lp_output),
+                _ => 0,
+            }
         }
     }
 }
@@ -730,7 +750,7 @@ impl Axis {
 /// This implementation just includes all the fields.
 pub struct Packet {
     /// Specifies the context that generated the event.
-    pub context: u32, //*mut c_void,
+    pub context: u32,
     /// Specifies various status and error conditions. These conditions can be combined by using the bitwise OR operator.
     /// The pkStatus field can be any combination of the status values.
     pub status: u32,
