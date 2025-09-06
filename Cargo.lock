@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "psm_common"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
 ]
@@ -969,7 +969,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "wintab32"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "bitflags 2.9.4",
  "colog",

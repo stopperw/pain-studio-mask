@@ -6,3 +6,9 @@ members = [
 	"test_client"
 ]
 
+[profile.release-optimized]
+inherits = "release"
+strip = true
+lto = true
+codegen-units = 1
+

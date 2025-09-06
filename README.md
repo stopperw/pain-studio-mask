@@ -93,7 +93,7 @@ If it still doesn't work, try copying the config to the directory you are curren
 - `rustup target add x86_64-pc-windows-gnu`
 - `rustup target add i686-pc-windows-gnu`
 - Install the GNU toolchains for Windows
-- For x86_64, run `cargo build`, the DLL will be in `target/debug/wintab32.dll`
+- For x86_64, run `cargo build`, the DLL will be in `target/x86_64-pc-windows-gnu/debug/wintab32.dll`
 - For i686, run `cargo build --target i686-pc-windows-gnu`, the DLL will be in `target/i686-pc-windows-gnu/debug/wintab32.dll`
 - You can symlink the DLL to your app's folder to make development easier
 
@@ -113,6 +113,8 @@ If it still doesn't work, try copying the config to the directory you are curren
 - [Official Wintab Docs](https://developer-docs.wacom.com/docs/icbt/windows/wintab/wintab-reference) |
   [Wintab Projects](https://docs.thesevenpens.com/drawtab/developers/wintab-api) |
   [Wintab Debug Tools](https://developer-support.wacom.com/hc/en-us/articles/9354461019927-Wintab-diagnostic)
+
+Make a release build with `cargo build --profile release-optimized`.
 
 # FAQ
 
