@@ -804,6 +804,10 @@ pub extern "C" fn WTInfoA(w_category: u32, n_index: u32, lp_output: *mut c_void)
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn WTInfoW(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+    // THERE IS A SEGFAULT HAPPENING (only in wtinfo.exe as far as i can tell)
+    // THIS info! IS THE FIX (or RUST_LOG=debug)
+    // WHAT
+    // info!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     debug!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     WTInfo(w_category, n_index, lp_output)
 }
