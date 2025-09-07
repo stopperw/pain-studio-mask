@@ -13,6 +13,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
+    - name: Build (x86_64)
+      run: cargo build --package wintab32 --profile release-optimized --target x86_64-pc-windows-msvc
+    - name: Build (i686)
+      run: cargo build --package wintab32 --profile release-optimized --target i686-pc-windows-msvc
+    - name: Upload artifacts (x86_64)
+      uses: actions/upload-artifact@v4
+      with:
+        name: wintab32_msvc
+        path: target/x86_64-pc-windows-msvc/release-optimized/wintab32.dll
+    - name: Upload artifacts (i686)
+      uses: actions/upload-artifact@v4
+      with:
+        name: wintab32_i686_msvc
+        path: target/i686-pc-windows-msvc/release-optimized/wintab32.dll
   linux:
     name: Linux (cross-compile)
     runs-on: ubuntu-latest
