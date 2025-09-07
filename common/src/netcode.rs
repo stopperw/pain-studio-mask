@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const COMPATIBLE_VERSION: u32 = 1;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PSMPacketC2S {
@@ -109,7 +111,7 @@ pub enum PSMPacketC2S {
 pub enum PSMPacketS2C {
     /// Server's response to [PSMPacketC2S::Hi]
     Hi {
-        /// Server compatible version
+        /// Server compatible version (should be [`COMPATIBLE_VERSION`])
         compatible: u32,
     },
 }

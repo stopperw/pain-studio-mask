@@ -16,7 +16,7 @@ use windows::Win32::{
 };
 
 use crate::{config::Config, ffi::*};
-use psm_common::netcode::{PSMPacketC2S, PSMPacketS2C};
+use psm_common::netcode::{PSMPacketC2S, PSMPacketS2C, COMPATIBLE_VERSION};
 
 pub mod config;
 pub mod ffi;
@@ -103,7 +103,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
         match packet {
             PSMPacketC2S::Hi { name } => {
                 info!("Client: {}", name);
-                send_packet(&mut socket, &PSMPacketS2C::Hi { compatible: 1 })?;
+                send_packet(&mut socket, &PSMPacketS2C::Hi { compatible: COMPATIBLE_VERSION })?;
             }
             PSMPacketC2S::TabletEvent {
                 status,
