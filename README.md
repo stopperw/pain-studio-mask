@@ -99,10 +99,11 @@ If it still doesn't work, try copying the config to the directory you are curren
 
 ## On Windows
 
+- Set target in `.cargo/config.toml` to `x86_64-pc-windows-msvc`
 - `rustup target add x86_64-pc-windows-msvc`
 - `rustup target add i686-pc-windows-msvc`
 - Install the MSVC toolchains (if you haven't already)
-- For x86_64, run `cargo build`, the DLL will be in `target/debug/wintab32.dll`
+- For x86_64, run `cargo build`, the DLL will be in `target/(x86_64-pc-windows-msvc/)debug/wintab32.dll`
 - For i686, run `cargo build --target i686-pc-windows-msvc`, the DLL will be in `target/i686-pc-windows-msvc/debug/wintab32.dll`
 
 ## Tips
