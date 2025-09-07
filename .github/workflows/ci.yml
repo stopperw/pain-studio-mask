@@ -23,9 +23,9 @@ jobs:
       with:
         targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
     - name: Build (x86_64)
-      run: cargo build --package wintab32 --profile debug --target x86_64-pc-windows-msvc
+      run: cargo build --package wintab32 --target x86_64-pc-windows-msvc
     - name: Build (i686)
-      run: cargo build --package wintab32 --profile debug --target i686-pc-windows-msvc
+      run: cargo build --package wintab32 --target i686-pc-windows-msvc
     - name: Upload artifacts (x86_64)
       uses: actions/upload-artifact@v4
       with:
@@ -51,9 +51,9 @@ jobs:
       with:
         targets: x86_64-pc-windows-gnu,i686-pc-windows-gnu
     - name: Cross-compile for Windows (x86_64)
-      run: cargo build --package wintab32 --profile debug --target x86_64-pc-windows-gnu
+      run: cargo build --package wintab32 --target x86_64-pc-windows-gnu
     - name: Cross-compile for Windows (i686)
-      run: cargo build --package wintab32 --profile debug --target i686-pc-windows-gnu
+      run: cargo build --package wintab32 --target i686-pc-windows-gnu
     - name: Upload artifacts (x86_64)
       uses: actions/upload-artifact@v4
       with:
