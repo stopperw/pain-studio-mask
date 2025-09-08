@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use color_eyre::eyre::{ContextCompat, WrapErr, bail};
+use color_eyre::eyre::{ContextCompat, bail};
 use log::{debug, error, info};
 use static_init::{constructor, destructor};
 use windows::Win32::{
