@@ -81,6 +81,12 @@ in the same directory as your `wintab32.dll`.
 
 If it still doesn't work, try copying the config to the directory you are currently in.
 
+The config search order is as follows:
+
+1. Working directory
+2. Application executable directory
+3. [Config directory](https://docs.rs/dirs/latest/dirs/fn.config_local_dir.html)
+
 # Development
 
 ## Prerequisites

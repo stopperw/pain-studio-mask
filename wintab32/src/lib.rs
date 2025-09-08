@@ -45,12 +45,7 @@ pub fn main() -> color_eyre::Result<()> {
     debug!("PSM debug");
 
     {
-        let mut file = std::fs::File::open("psm.json")
-            .wrap_err("config file (psm.json) wasn't found or couldn't be accessed")?;
-        let mut config_text = String::new();
-        file.read_to_string(&mut config_text)
-            .wrap_err("config is unreadable")?;
-        let config: Config = serde_json::from_str(&config_text).wrap_err("config parse failed")?;
+        let config: Config = config::find_config()?;
         let mut state = STATE.lock().unwrap();
         *state = Some(PSM::new(config));
     }

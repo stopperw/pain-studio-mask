@@ -1,3 +1,6 @@
+use std::io::Read;
+
+use color_eyre::eyre::Context;
 use psm_common::netcode::Axis;
 use serde::{Deserialize, Serialize};
 
@@ -74,4 +77,26 @@ pub struct TabletPreset {
     pub orientation: [Axis; 3],
     /// 3-element array describing the tablet's rotation range and resolution capabilities.
     pub rotation: [Axis; 3],
+}
+
+pub fn find_config() -> color_eyre::Result<Config> {
+    let mut file_result = std::fs::File::open("psm.json");
+    if let Err(_) = file_result {
+        if let Ok(mut exe) = std::env::current_exe() {
+            exe.pop();
+            file_result = std::fs::File::open(exe.join("psm.json"));
+        }
+    }
+    if let Err(_) = file_result {
+        if let Some(cfgs) = dirs::config_local_dir() {
+            file_result = std::fs::File::open(cfgs.join("psm.json"));
+        }
+    }
+    let mut file = file_result
+        .wrap_err("config file (psm.json) wasn't found or couldn't be accessed")?;
+    let mut config_text = String::new();
+    file.read_to_string(&mut config_text)
+        .wrap_err("config is unreadable")?;
+    let config: Config = serde_json::from_str(&config_text).wrap_err("config parse failed")?;
+    Ok(config)
 }

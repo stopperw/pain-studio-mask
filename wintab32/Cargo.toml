@@ -16,3 +16,4 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
 static_init = "1.0.4"
 windows = { version = "0.61.3", features = ["Win32_UI_WindowsAndMessaging"] }
+dirs = "6.0.0"
