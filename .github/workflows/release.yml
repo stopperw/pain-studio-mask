@@ -35,7 +35,7 @@ jobs:
         path: target/i686-pc-windows-msvc/release-optimized/wintab32.dll
   linux:
     name: Linux (cross-compile)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout
