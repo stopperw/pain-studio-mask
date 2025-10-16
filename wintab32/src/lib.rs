@@ -473,6 +473,7 @@ pub extern "C" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
     true
 }
 
+// https://developer-docs.wacom.com/docs/icbt/windows/wintab/wintab-reference/#wtpacketsget
 #[unsafe(no_mangle)]
 pub extern "C" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
     debug!(
@@ -498,9 +499,66 @@ pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_e
         .contexts
         .get_mut(&ctx_id)
         .wrap_err("context not found")?;
+    if ptr == std::ptr::null_mut() {
+        // flush queue
+        ctx.packets.clear();
+        return Ok(0);
+    }
     let mut count = 0;
     for i in 0..max_packets {
         let packet = match ctx.packets.pop_front() {
+            Some(x) => x,
+            None => break,
+        };
+        // TODO: FIXME: ooooh scary pointer arithmetics.
+        let packet_size = size_of::<Packet>();
+        packet.write(
+            ptr.wrapping_add(packet_size * (i as usize)),
+            ctx.logical_context.packet_data,
+        );
+        count += 1;
+    }
+
+    Ok(count as u32)
+}
+
+// only by hope the parameters of this function may be determined
+// bask in the glory of https://developer-docs.wacom.com/docs/icbt/windows/wintab/wintab-reference/#wtpacketspeek
+#[unsafe(no_mangle)]
+pub extern "C" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
+// pub extern "C" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
+    debug!(
+        "WTPacketsPeek({:#?}, {:#?}, {:#?})",
+        ctx_id, max_packets, ptr
+    );
+    match packets_peek(ctx_id, max_packets, ptr) {
+        Ok(v) => v,
+        Err(err) => {
+            error!(
+                "WTPacketsPeek({:#?}, {:#?}, {:#?}) failed!",
+                ctx_id, max_packets, ptr
+            );
+            error!("{:?}", err);
+            0
+        }
+    }
+}
+pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
+    let mut state = STATE.lock().unwrap();
+    let state = state.as_mut().unwrap();
+    let ctx = state
+        .contexts
+        .get_mut(&ctx_id)
+        .wrap_err("context not found")?;
+    if ptr == std::ptr::null_mut() {
+        // flush queue
+        ctx.packets.clear();
+        return Ok(0);
+    }
+    let mut count = 0;
+    let mut packets = ctx.packets.iter();
+    for i in 0..max_packets {
+        let packet = match packets.next() {
             Some(x) => x,
             None => break,
         };
@@ -623,15 +681,6 @@ pub extern "C" fn WTSave(ctx_id: usize, ptr: *mut c_void) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn WTRestore(hwnd: HWND, ptr: *mut c_void, value: bool) -> usize {
     debug!("!STUB! WTRestore({:#?}, {:#?}, {:#?})", hwnd, ptr, value);
-    0
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
-    debug!(
-        "!STUB! WTPacketsPeek({:#?}, {:#?}, {:#?})",
-        ctx_id, ext, ptr
-    );
     0
 }
 
