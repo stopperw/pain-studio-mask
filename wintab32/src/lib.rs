@@ -336,7 +336,11 @@ impl Context {
         packet.orientation.altitude = 900;
         packet.time = self.time.elapsed().as_millis() as u32;
         debug!("wtpacket: {:?}", packet);
-        // TODO: limit queue size by queue_size
+        // limiting by queue size
+        let queue_size = self.queue_size.max(1) as isize;
+        for _overflow in 0..((self.packets.len() as isize) - queue_size + 1) {
+            self.packets.pop_front();
+        }
         self.packets.push_back(packet);
         // posting WT_PACKET(serial, ctx_handle)
         unsafe {
