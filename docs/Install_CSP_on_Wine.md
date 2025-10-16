@@ -7,11 +7,11 @@ I haven't tested all the features, but everything I've checked works
 
 Just install the most recent version of Wine you can.
 
-I actually use [wine-tkg-staging-wow64-bin (AUR)](https://aur.archlinux.org/packages/wine-tkg-staging-wow64-bin),
-if you are using Arch Linux try this first, but all of this *should* work with any latest version of Wine.
-(probably run everything through `wine64` then)
+- On Arch, use `pacman -Syu wine-staging`
+- On Fedora, use `dnf install wine`
+- On Debian/Ubuntu, follow [these instructions](https://gitlab.winehq.org/wine/wine/-/wikis/Debian-Ubuntu)
 
-# Step 2. Install some winetricks dependencies
+# Step 2. Install winetricks dependencies
 
 Run `winetricks corefonts vcrun2022 dxvk`.
 
@@ -31,7 +31,7 @@ Run `winetricks corefonts vcrun2022 dxvk`.
 # Step 5. Install CLIP STUDIO PAINT
 
 Download [CLIP STUDIO PAINT](https://www.clipstudio.net/en/purchase/trial) from the official website.
-Very straightforward to install, but it will take some time and may appear stuck.
+Very straightforward to install, just click Next a bunch of times, but the installation will take some time.
 
 # Step 6. Run CLIP STUDIO PAINT
 
@@ -43,6 +43,8 @@ I recommend just running `CLIPStudioPaint.exe` directly to save some time.
 
 You can easily login through the launcher, but if you don't want to register through Edge on Wine,
 use [this link](https://accounts.clip-studio.com/app/register).
+
+CSP will complain about the current OS being no longer supported, but you can safely ignore it.
 
 # Step 7. If your graphics tablet doesn't work
 
@@ -63,8 +65,7 @@ GitHub repository.
 
 # Tips
 
-- When in doubt, `wineserver -k` (this will kill all running Wine apps).
-  Actually, just always run it before/after CSP.
+- When in doubt, run `wineserver -k` (this will kill all running Wine apps) and try again.
 - Try `winetricks renderer=vulkan` if something is wrong with graphics.
 - \[Wayland\] Try running with `DISPLAY=` (a.k.a. unset the DISPLAY env var)
   to use the experimental Wayland-native Wine.
