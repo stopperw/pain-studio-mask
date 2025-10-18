@@ -4,8 +4,8 @@
 Made for use with **CLIP STUDIO PAINT**, but it will probably work with other apps
 that use Wintab (like SAI).
 
-If you want, it can also be used in Windows, for example to make Wintab apps
-compatible with OpenTabletDriver.
+If you want, it can also be used in Windows, for example to make Wintab-only apps
+compatible with OpenTabletDriver devices.
 
 # Getting started
 
