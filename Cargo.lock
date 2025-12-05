@@ -1078,6 +1078,7 @@ dependencies = [
  "colog",
  "color-eyre",
  "dirs",
+ "env_logger",
  "log",
  "psm_common",
  "serde",

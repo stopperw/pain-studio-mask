@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     ffi::c_void,
+    fs::OpenOptions,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{LazyLock, Mutex},
@@ -16,7 +17,7 @@ use windows::Win32::{
 };
 
 use crate::{config::Config, ffi::*};
-use psm_common::netcode::{PSMPacketC2S, PSMPacketS2C, COMPATIBLE_VERSION};
+use psm_common::netcode::{COMPATIBLE_VERSION, PSMPacketC2S, PSMPacketS2C};
 
 pub mod config;
 pub mod ffi;
@@ -28,12 +29,44 @@ static STATE: LazyLock<Mutex<Option<PSM>>> = LazyLock::new(|| Mutex::new(None));
 
 #[constructor(0)]
 extern "C" fn init_main() {
-    colog::init();
+    if let Ok(log_path) = std::env::var("PSM_LOG_FILE") {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_path)
+            .expect("failed to open log file (PSM_LOG_FILE) for writing");
+        colog::default_builder()
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .init();
+    } else {
+        colog::init();
+    }
     color_eyre::install().ok();
+    panic_pipe();
     if let Err(err) = main() {
         error!("{:?}", err);
         error!("PSM's main thread failed! It's recommended to restart the app.");
     }
+}
+
+fn panic_pipe() {
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open("psm.panic.log");
+        if let Ok(mut file) = file {
+            file.write_all(
+                (&format!("{:#?}\n{:#?}", info.payload_as_str(), info)).as_bytes(),
+            )
+            .ok();
+        }
+        error!("{:#?}\n{:#?}", info.payload_as_str(), info);
+        default_panic(info);
+    }));
 }
 
 #[destructor(0)]
@@ -98,7 +131,12 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
         match packet {
             PSMPacketC2S::Hi { name } => {
                 info!("Client: {}", name);
-                send_packet(&mut socket, &PSMPacketS2C::Hi { compatible: COMPATIBLE_VERSION })?;
+                send_packet(
+                    &mut socket,
+                    &PSMPacketS2C::Hi {
+                        compatible: COMPATIBLE_VERSION,
+                    },
+                )?;
             }
             PSMPacketC2S::TabletEvent {
                 status,
@@ -530,7 +568,7 @@ pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_e
 // bask in the glory of https://developer-docs.wacom.com/docs/icbt/windows/wintab/wintab-reference/#wtpacketspeek
 #[unsafe(no_mangle)]
 pub extern "C" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
-// pub extern "C" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
+    // pub extern "C" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
     debug!(
         "WTPacketsPeek({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
