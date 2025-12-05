@@ -59,10 +59,8 @@ fn panic_pipe() {
             .truncate(true)
             .open("psm.panic.log");
         if let Ok(mut file) = file {
-            file.write_all(
-                (&format!("{:#?}\n{:#?}", info.payload_as_str(), info)).as_bytes(),
-            )
-            .ok();
+            file.write_all((&format!("{:#?}\n{:#?}", info.payload_as_str(), info)).as_bytes())
+                .ok();
         }
         error!("{:#?}\n{:#?}", info.payload_as_str(), info);
         default_panic(info);
@@ -450,7 +448,7 @@ unsafe impl Send for ThreadHWND {}
 unsafe impl Sync for ThreadHWND {}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTOpenA(
+pub unsafe extern "C-unwind" fn WTOpenA(
     hwnd: HWND,
     lp_log_ctx: *mut WtiLogicalContext,
     f_enable: bool,
@@ -459,7 +457,7 @@ pub unsafe extern "C" fn WTOpenA(
     unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTOpenW(
+pub unsafe extern "C-unwind" fn WTOpenW(
     hwnd: HWND,
     lp_log_ctx: *mut WtiLogicalContext,
     f_enable: bool,
@@ -468,7 +466,7 @@ pub unsafe extern "C" fn WTOpenW(
     unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTOpen(
+pub unsafe extern "C-unwind" fn WTOpen(
     hwnd: HWND,
     lp_log_ctx: *mut WtiLogicalContext,
     f_enable: bool,
@@ -503,7 +501,7 @@ pub unsafe extern "C" fn WTOpen(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
+pub extern "C-unwind" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
     debug!("WTEnable({:#?}, {})", ctx_id, enable);
     let mut state = STATE.lock().unwrap();
     let state = state.as_mut().unwrap();
@@ -517,7 +515,7 @@ pub extern "C" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
 
 // https://developer-docs.wacom.com/docs/icbt/windows/wintab/wintab-reference/#wtpacketsget
 #[unsafe(no_mangle)]
-pub extern "C" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
+pub extern "C-unwind" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
     debug!(
         "WTPacketsGet({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
@@ -567,8 +565,8 @@ pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_e
 // only by hope the parameters of this function may be determined
 // bask in the glory of https://developer-docs.wacom.com/docs/icbt/windows/wintab/wintab-reference/#wtpacketspeek
 #[unsafe(no_mangle)]
-pub extern "C" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
-    // pub extern "C" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
+pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> u32 {
+    // pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, ext: u32, ptr: *mut c_void) -> i32 {
     debug!(
         "WTPacketsPeek({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
@@ -617,7 +615,7 @@ pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTPacket(ctx_id: usize, serial: u32, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTPacket(ctx_id: usize, serial: u32, ptr: *mut c_void) -> bool {
     debug!("WTPacket({:#?}, {:#?}, {:#?})", ctx_id, serial, ptr);
     match packet(ctx_id, serial, ptr) {
         Ok(v) => v,
@@ -646,13 +644,13 @@ pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Resul
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTOverlap(ctx_id: usize, overlap: bool) -> bool {
+pub extern "C-unwind" fn WTOverlap(ctx_id: usize, overlap: bool) -> bool {
     debug!("!STUB! WTOverlap({:#?}, {:#?}) -> true", ctx_id, overlap);
     true
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTClose(ctx_id: usize) -> bool {
+pub extern "C-unwind" fn WTClose(ctx_id: usize) -> bool {
     debug!("WTClose({:#?})", ctx_id);
     match close(ctx_id) {
         Ok(v) => v,
@@ -671,63 +669,63 @@ pub fn close(ctx_id: usize) -> color_eyre::Result<bool> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTGetA(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTGetA(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTGetA({:#?}, {:#?})", ctx_id, ptr);
     WTGet(ctx_id, ptr)
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTGetW(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTGetW(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTGetW({:#?}, {:#?})", ctx_id, ptr);
     WTGet(ctx_id, ptr)
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTGet(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTGet(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTGet({:#?}, {:#?})", ctx_id, ptr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTSetA(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTSetA(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTSetA({:#?}, {:#?})", ctx_id, ptr);
     WTGet(ctx_id, ptr)
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTSetW(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTSetW(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTSetW({:#?}, {:#?})", ctx_id, ptr);
     WTGet(ctx_id, ptr)
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn WTSet(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTSet(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTSet({:#?}, {:#?})", ctx_id, ptr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTExtGet(ctx_id: usize, ext: u32, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTExtGet(ctx_id: usize, ext: u32, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTExtGet({:#?}, {:#?}, {:#?})", ctx_id, ext, ptr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTExtSet(ctx_id: usize, ext: u32, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTExtSet(ctx_id: usize, ext: u32, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTExtSet({:#?}, {:#?}, {:#?})", ctx_id, ext, ptr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTSave(ctx_id: usize, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTSave(ctx_id: usize, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTSave({:#?}, {:#?})", ctx_id, ptr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTRestore(hwnd: HWND, ptr: *mut c_void, value: bool) -> usize {
+pub extern "C-unwind" fn WTRestore(hwnd: HWND, ptr: *mut c_void, value: bool) -> usize {
     debug!("!STUB! WTRestore({:#?}, {:#?}, {:#?})", hwnd, ptr, value);
     0
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTDataGet(
+pub extern "C-unwind" fn WTDataGet(
     ctx_id: usize,
     begin: u32,
     end: u32,
@@ -743,7 +741,7 @@ pub extern "C" fn WTDataGet(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTDataPeek(
+pub extern "C-unwind" fn WTDataPeek(
     ctx_id: usize,
     begin: u32,
     end: u32,
@@ -759,7 +757,11 @@ pub extern "C" fn WTDataPeek(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTQueuePacketsEx(ctx_id: usize, old: *mut c_void, new: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTQueuePacketsEx(
+    ctx_id: usize,
+    old: *mut c_void,
+    new: *mut c_void,
+) -> bool {
     debug!(
         "!STUB! WTQueuePacketsEx({:#?}, {:#?}, {:#?})",
         ctx_id, old, new
@@ -768,7 +770,7 @@ pub extern "C" fn WTQueuePacketsEx(ctx_id: usize, old: *mut c_void, new: *mut c_
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTQueueSizeGet(ctx_id: usize) -> u32 {
+pub extern "C-unwind" fn WTQueueSizeGet(ctx_id: usize) -> u32 {
     debug!("WTQueueSizeGet({:#?})", ctx_id);
     match queue_size_get(ctx_id) {
         Ok(v) => v,
@@ -790,7 +792,7 @@ pub fn queue_size_get(ctx_id: usize) -> color_eyre::Result<u32> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTQueueSizeSet(ctx_id: usize, num_packets: u32) -> bool {
+pub extern "C-unwind" fn WTQueueSizeSet(ctx_id: usize, num_packets: u32) -> bool {
     debug!("WTQueueSizeSet({:#?}, {:#?})", ctx_id, num_packets);
     match queue_size_set(ctx_id, num_packets) {
         Ok(v) => v,
@@ -813,25 +815,25 @@ pub fn queue_size_set(ctx_id: usize, num_packets: u32) -> color_eyre::Result<boo
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTMgrOpen(hwnd: HWND, msg_base: u32) -> usize {
+pub extern "C-unwind" fn WTMgrOpen(hwnd: HWND, msg_base: u32) -> usize {
     debug!("!STUB! WTMgrOpen({:#?}, {:#?})", hwnd, msg_base);
     0
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTMgrExt(mgr: usize, value: u32, ptr: *mut c_void) -> bool {
+pub extern "C-unwind" fn WTMgrExt(mgr: usize, value: u32, ptr: *mut c_void) -> bool {
     debug!("!STUB! WTMgrExt({:#?}, {:#?}, {:#?})", mgr, value, ptr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTMgrClose(mgr: usize) -> bool {
+pub extern "C-unwind" fn WTMgrClose(mgr: usize) -> bool {
     debug!("!STUB! WTMgrClose({:#?})", mgr);
     false
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTMgrDefContextEx(mgr: usize, device: u32, system: bool) -> usize {
+pub extern "C-unwind" fn WTMgrDefContextEx(mgr: usize, device: u32, system: bool) -> usize {
     debug!(
         "!STUB! WTMgrDefContextEx({:#?}, {:#?}, {:#?})",
         mgr, device, system
@@ -840,7 +842,7 @@ pub extern "C" fn WTMgrDefContextEx(mgr: usize, device: u32, system: bool) -> us
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTMgrPacketHookDefProc(
+pub extern "C-unwind" fn WTMgrPacketHookDefProc(
     value1: i32,
     w: WPARAM,
     l: LPARAM,
@@ -854,12 +856,20 @@ pub extern "C" fn WTMgrPacketHookDefProc(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTInfoA(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn WTInfoA(
+    w_category: u32,
+    n_index: u32,
+    lp_output: *mut c_void,
+) -> u32 {
     debug!("WTInfoA({}, {}, {:#?});", w_category, n_index, lp_output);
     unsafe { WTInfo(w_category, n_index, lp_output) }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTInfoW(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn WTInfoW(
+    w_category: u32,
+    n_index: u32,
+    lp_output: *mut c_void,
+) -> u32 {
     // TODO: THERE IS A SEGFAULT HAPPENING (only in wtinfo.exe as far as i can tell)
     // THIS info! IS THE FIX (or RUST_LOG=debug)
     // WHAT
@@ -868,7 +878,11 @@ pub unsafe extern "C" fn WTInfoW(w_category: u32, n_index: u32, lp_output: *mut 
     unsafe { WTInfo(w_category, n_index, lp_output) }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTInfo(w_category: u32, n_index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn WTInfo(
+    w_category: u32,
+    n_index: u32,
+    lp_output: *mut c_void,
+) -> u32 {
     debug!("WTInfo({}, {}, {:#?});", w_category, n_index, lp_output);
 
     unsafe {
