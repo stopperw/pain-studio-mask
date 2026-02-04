@@ -9,7 +9,7 @@ use std::{
 };
 
 use color_eyre::eyre::{ContextCompat, bail};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use static_init::{constructor, destructor};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
@@ -383,6 +383,13 @@ impl Context {
         }
         if self.window.0.0.is_null() {
             bail!("packet sent without a valid window");
+        }
+        if (packet.x as i32) > self.logical_context.out_ext_x
+            || (packet.y as i32) > self.logical_context.out_ext_y
+            || (packet.x as i32) < self.logical_context.out_org_x
+            || (packet.y as i32) < self.logical_context.out_org_y {
+                warn!("Ignoring packet with out of range coordinates! You might need to check your psm.json.");
+                return Ok(());
         }
         self.serial += 1;
         packet.context = self.handle as u32;
@@ -931,13 +938,13 @@ pub unsafe fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) ->
 }
 
 pub unsafe fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
-    let mut state = get_state_or_init().unwrap();
+    let state = get_state_or_init().unwrap();
     let state = state.as_ref().unwrap();
     unsafe { state.device.handle_info(index, lp_output) }
 }
 
 pub unsafe fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
-    let mut state = get_state_or_init().unwrap();
+    let state = get_state_or_init().unwrap();
     let state = state.as_ref().unwrap();
     unsafe { state.cursor.handle_info(index, lp_output) }
 }
