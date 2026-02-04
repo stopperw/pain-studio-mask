@@ -73,6 +73,24 @@ extern "C" fn free_main() {
 }
 
 pub fn main() -> color_eyre::Result<()> {
+    init()?;
+
+    Ok(())
+}
+
+pub fn get_state_or_init() -> color_eyre::Result<std::sync::MutexGuard<'static, std::option::Option<PSM>>> {
+    let no_state = STATE.lock().unwrap().is_none();
+    if no_state {
+        init()?;
+    }
+    Ok(STATE.lock().unwrap())
+}
+
+pub fn init() -> color_eyre::Result<()> {
+    if STATE.lock().unwrap().is_some() {
+        return Ok(());
+    }
+
     debug!("PSM debug");
 
     {
@@ -145,7 +163,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 normal_pressure,
                 tangential_pressure,
             } => {
-                let mut state = STATE.lock().unwrap();
+                let mut state = get_state_or_init().unwrap();
                 let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     if let Err(err) = ctx.send_packet(Packet {
@@ -169,7 +187,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 }
             }
             PSMPacketC2S::Proximity { value } => {
-                let mut state = STATE.lock().unwrap();
+                let mut state = get_state_or_init().unwrap();
                 let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     if let Err(err) = ctx.proximity(value) {
@@ -199,7 +217,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 sys_ext_x,
                 sys_ext_y,
             } => {
-                let mut state = STATE.lock().unwrap();
+                let mut state = get_state_or_init().unwrap();
                 let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     ctx.logical_context.status = status;
@@ -242,7 +260,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 orientation,
                 rotation,
             } => {
-                let mut state = STATE.lock().unwrap();
+                let mut state = get_state_or_init().unwrap();
                 let state = state.as_mut().unwrap();
                 state.device.hardware = hardware;
                 state.device.packet_rate = packet_rate;
@@ -480,7 +498,7 @@ pub unsafe extern "C-unwind" fn WTOpen(
         debug!("LogContext -> {:#?}", *lp_log_ctx);
     }
 
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     state.counter += 1;
 
@@ -503,7 +521,7 @@ pub unsafe extern "C-unwind" fn WTOpen(
 #[unsafe(no_mangle)]
 pub extern "C-unwind" fn WTEnable(ctx_id: usize, enable: bool) -> bool {
     debug!("WTEnable({:#?}, {})", ctx_id, enable);
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     let ctx = match state.contexts.get_mut(&ctx_id) {
         Some(ctx) => ctx,
@@ -533,7 +551,7 @@ pub extern "C-unwind" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut
     }
 }
 pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
@@ -584,7 +602,7 @@ pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mu
     }
 }
 pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
@@ -627,7 +645,7 @@ pub extern "C-unwind" fn WTPacket(ctx_id: usize, serial: u32, ptr: *mut c_void) 
     }
 }
 pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Result<bool> {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
@@ -662,7 +680,7 @@ pub extern "C-unwind" fn WTClose(ctx_id: usize) -> bool {
     }
 }
 pub fn close(ctx_id: usize) -> color_eyre::Result<bool> {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     state.contexts.retain(|i, _| *i != ctx_id);
     Ok(true)
@@ -782,7 +800,7 @@ pub extern "C-unwind" fn WTQueueSizeGet(ctx_id: usize) -> u32 {
     }
 }
 pub fn queue_size_get(ctx_id: usize) -> color_eyre::Result<u32> {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
@@ -804,7 +822,7 @@ pub extern "C-unwind" fn WTQueueSizeSet(ctx_id: usize, num_packets: u32) -> bool
     }
 }
 pub fn queue_size_set(ctx_id: usize, num_packets: u32) -> color_eyre::Result<bool> {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     let ctx = state
         .contexts
@@ -906,20 +924,20 @@ pub unsafe extern "C-unwind" fn WTInfo(
 }
 
 pub unsafe fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
-    let mut state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     state.default_context.options = if system { CXO_SYSTEM } else { 0 };
     unsafe { state.default_context.handle_info(index, lp_output) }
 }
 
 pub unsafe fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
-    let state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_ref().unwrap();
     unsafe { state.device.handle_info(index, lp_output) }
 }
 
 pub unsafe fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
-    let state = STATE.lock().unwrap();
+    let mut state = get_state_or_init().unwrap();
     let state = state.as_ref().unwrap();
     unsafe { state.cursor.handle_info(index, lp_output) }
 }
