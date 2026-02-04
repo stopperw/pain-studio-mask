@@ -40,7 +40,7 @@ to drawing app's folder (for CSP, it should be at `C:\Program Files\CELSYS\CLIP 
 
 If you did everything correctly, the tablet should just work in the app!
 
-If you run your app through console, you should see a `[*] PSM is loaded!` message.
+If you run your app through a terminal, you should see a `[*] PSM is loaded!` message.
 
 If nothing works, check the Troubleshooting section below.
 
@@ -60,19 +60,12 @@ If nothing works, check the Troubleshooting section below.
   ***not `wintab32.dll`***.
 - \[Wine\] Try running with `WINEDLLOVERRIDES="wintab32=n"`
   to ensure that PSM's Wintab32 is used.
+- Try running with `PSM_LOG_FILE=psm.log` - that will write logs
+  into `psm.log` file instead of stdout.
 - Verify that you put the library into the correct folder, next to
   the app's executable file.
 - Verify that you used the DLL for the correct architecture.
   For CSP, you should use the x64 version (`wintab32.dll` in releases).
-
-## Failed to bind! PSM WILL NOT WORK. (AddrInUse)
-
-You have another app that already uses PSM or the port 40302.
-
-If you are using Wine, you can use `wineserver -k` to kill all Wine apps.
-
-On Linux, you can use `sudo lsof -i -P -n | grep 40302` to see what process
-is using the port (second column is the PID).
 
 ## Config-related errors
 
@@ -86,6 +79,15 @@ The config search order is as follows:
 1. Working directory
 2. Application executable directory
 3. [Config directory](https://docs.rs/dirs/latest/dirs/fn.config_local_dir.html)
+
+## Failed to bind! PSM WILL NOT WORK. (AddrInUse)
+
+You have another app that already uses PSM or the port 40302.
+
+If you are using Wine, you can use `wineserver -k` to kill all Wine apps.
+
+On Linux, you can use `sudo lsof -i -P -n | grep 40302` to see what process
+is using the port (second column is the PID).
 
 # Development
 
