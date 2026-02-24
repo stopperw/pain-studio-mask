@@ -1,2 +1,18 @@
 [build]
 target = "x86_64-pc-windows-gnu"
+
+# [target.i686-pc-windows-gnu]
+# rustflags = "-C panic=abort -C lto -C embed-bitcode=yes"
+
+# > At present, when being invoked from a workspace,
+# > Cargo does not read config files from crates within the workspace.
+# why?
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=wintab32/wintab32.def"]
+[target.i686-pc-windows-gnu]
+rustflags = ["-C", "link-args=wintab32/wintab32.def"]
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=wintab32/wintab32.def"]
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "link-args=wintab32/wintab32.def"]
+
