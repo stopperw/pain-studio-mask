@@ -419,6 +419,7 @@ impl Context {
         if self.window.0.0.is_null() {
             bail!("update sent without a valid window");
         }
+        self.absolute_ext();
         // posting WT_CTXUPDATE(ctx_handle, status)
         unsafe {
             PostMessageW(
@@ -464,6 +465,17 @@ impl Context {
             )?
         };
         Ok(())
+    }
+
+    pub fn absolute_ext(&mut self) {
+        self.logical_context.in_ext_x = self.logical_context.in_ext_x.abs();
+        self.logical_context.in_ext_y = self.logical_context.in_ext_y.abs(); 
+        self.logical_context.in_ext_z = self.logical_context.in_ext_z.abs();
+        self.logical_context.out_ext_x = self.logical_context.out_ext_x.abs();
+        self.logical_context.out_ext_y = self.logical_context.out_ext_y.abs();
+        self.logical_context.out_ext_z = self.logical_context.out_ext_z.abs();
+        self.logical_context.sys_ext_x = self.logical_context.sys_ext_x.abs();
+        self.logical_context.sys_ext_y = self.logical_context.sys_ext_y.abs();
     }
 }
 
@@ -516,6 +528,7 @@ pub unsafe extern "C-unwind" fn WTOpen(
     unsafe {
         std::ptr::copy(lp_log_ctx, &mut context.logical_context, 1);
     }
+    context.absolute_ext();
     state.contexts.insert(handle, context);
     debug!(
         "new context registered at {} (enabled = {})",
