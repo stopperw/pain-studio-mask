@@ -8,17 +8,26 @@ use crate::{
 /// Returns [WtiInterface]
 pub const WTI_INTERFACE: u32 = 1;
 pub const WTI_STATUS: u32 = 2;
+/// Contains the current default digitizing logical context.
 /// Returns [WtiLogicalContext]
 pub const WTI_DEFCONTEXT: u32 = 3;
+/// Contains the current default system logical context.
 /// Returns [WtiLogicalContext]
 pub const WTI_DEFSYSCTX: u32 = 4;
 pub const WTI_DEVICES: u32 = 100;
+pub const WTI_DEVICES_MAX: u32 = 200;
 pub const WTI_CURSORS: u32 = 200;
+pub const WTI_CURSORS_MAX: u32 = 300;
 pub const WTI_EXTENSIONS: u32 = 300;
+pub const WTI_EXTENSIONS_MAX: u32 = 400;
+/// Each contains the current default digitizing logical context for the corresponding device.
 /// Returns [WtiLogicalContext]
 pub const WTI_DDCTXS: u32 = 400;
+pub const WTI_DDCTXS_MAX: u32 = 500;
+/// Each contains the current default system logical context for the corresponding device.
 /// Returns [WtiLogicalContext]
 pub const WTI_DSCTXS: u32 = 500;
+pub const WTI_DSCTXS_MAX: u32 = 600;
 
 pub const WT_DEFBASE: u32 = 0x7FF0;
 
@@ -53,11 +62,24 @@ pub const PK_ORIENTATION: u32 = 0x1000;
 pub const PK_ROTATION: u32 = 0x2000;
 
 // Context option values
+// For the default digitizing context, CXO_MARGIN and CXO_MGNINSIDE are allowed.
+// For the default system context, CXO_SYSTEM is required; CXO_PEN, CXO_MARGIN, and CXO_MGNINSIDE are allowed.
+/// Specifies that the context is a system cursor context.
 pub const CXO_SYSTEM: u32 = 0x0001;
+/// Specifies that the context is a Pen Windows context, if Pen Windows is installed.
+/// The context is also a system cursor context; specifying CXO_PEN implies CXO_SYSTEM.
 pub const CXO_PEN: u32 = 0x0002;
+/// Specifies that the context returns WT_PACKET messages to its owner.
 pub const CXO_MESSAGES: u32 = 0x0004;
+/// Specifies that the input context on the tablet will have a margin.
+/// The margin is an area outside the specified input area where events
+/// will be mapped to the edge of the input area.
+/// This feature makes it easier to input points at the edge of the context.
 pub const CXO_MARGIN: u32 = 0x8000;
+/// If the CXO_MARGIN bit is on, specifies that the margin will be inside the specified context.
+/// Thus, scaling will occur from a context slightly smaller than the specified input context to the output coordinate space.
 pub const CXO_MGNINSIDE: u32 = 0x4000;
+/// Specifies that the context returns WT_CSRCHANGE messages to it owner. (added in spec 1.1)
 pub const CXO_CSRMESSAGES: u32 = 0x0008;
 
 // Context status values
@@ -73,21 +95,20 @@ pub const CXL_MARGIN: u32 = 0x0008;
 pub const CXL_SYSOUT: u32 = 0x0010;
 
 // Packet status values
-// Specifies that the cursor is out of the context.
+/// Specifies that the cursor is out of the context.
 pub const TPS_PROXIMITY: u32 = 0x0001;
-// Specifies that the event queue for the context has overflowed.
+/// Specifies that the event queue for the context has overflowed.
 pub const TPS_QUEUE_ERR: u32 = 0x0002;
-// Specifies that the cursor is in the margin of the context.
+/// Specifies that the cursor is in the margin of the context.
 pub const TPS_MARGIN: u32 = 0x0004;
-// Specifies that the cursor is out of the context, but that the context has grabbed input while waiting for a button release event.
+/// Specifies that the cursor is out of the context, but that the context has grabbed input while waiting for a button release event.
 pub const TPS_GRAB: u32 = 0x0008;
-// Specifies that the cursor is in its inverted state. (added in spec 1.1)
+/// Specifies that the cursor is in its inverted state. (added in spec 1.1)
 pub const TPS_INVERT: u32 = 0x0010;
 
 // TODO: make structs more Rust-y and make a custom writer
-// for them, instead of limiting to static sizes.
-// Something like what is done to [Packet],
-// then we can have dynamic names for everything.
+// for them, instead of limiting to static sizes,
+// something like what was done with [Packet].
 
 pub const INTERFACE_WINTABID_LEN: usize = 33; // 16 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
@@ -193,14 +214,14 @@ pub struct WtiDevice {
     pub first_cursor_type: u32,
     /// Returns the maximum packet report rate in Hertz.
     pub packet_rate: u32,
-    /// (WTPKT) Returns a bit mask indicating which packet data items are always available.
-    pub packet_data: u32,
-    /// (WTPKT) Returns a bit mask indicating which packet data items are physically relative
+    /// Returns a bit mask indicating which packet data items are always available.
+    pub packet_data: WTPKT,
+    /// Returns a bit mask indicating which packet data items are physically relative
     /// (i.e. items for which the hardware can only report change, not absolute measurement).
-    pub packet_mode: u32,
-    /// (WTPKT) Returns a bit mask indicating which packet data items are only available when certain cursors are connected.
+    pub packet_mode: WTPKT,
+    /// Returns a bit mask indicating which packet data items are only available when certain cursors are connected.
     /// The individual cursor descriptions must be consulted to determine which cursors return which data.
-    pub csr_data: u32,
+    pub csr_data: WTPKT,
     /// Size of tablet context margins in tablet native coordinates. (X)
     pub x_margin: i32,
     /// Size of tablet context margins in tablet native coordinates. (Y)
@@ -370,8 +391,8 @@ pub struct WtiCursor {
     pub name: [u8; CURSOR_NAME_LEN],
     /// Returns whether the cursor is currently connected. Acts like a bool.
     pub active: u32,
-    /// (WTPKT) Returns a bit mask indicating the packet data items supported when this cursor is connected.
-    pub packet_data: u32,
+    /// Returns a bit mask indicating the packet data items supported when this cursor is connected.
+    pub packet_data: WTPKT,
     /// Returns the number of buttons on this cursor.
     pub buttons: u8,
     /// Returns the number of bits of raw button data returned by the hardware.
@@ -380,6 +401,7 @@ pub struct WtiCursor {
     /// The number of names in the list is the same as the number of buttons on the cursor.
     /// The names are separated by a single zero character; the list is terminated by two zero characters.
     /// Replaced by a single u8 to zero it out.
+    // TODO: this might be very wrong, cuz "the list is terminated by two zero characters."
     pub button_names: u8,
     /// Returns a 32 byte array of logical button numbers, one for each physical button.
     pub button_map: [u8; 32],
@@ -399,6 +421,7 @@ pub struct WtiCursor {
     pub tpbtnmarks: [u32; 2],
     /// Returns an array of UINTs describing the pressure response curve for tangential pressure.
     pub tpresponse: [u32; 256],
+    // Everything below is added in spec 1.1:
     /// Returns a manufacturer-specific physical identifier for the cursor.
     /// This value will distinguish the physical cursor from others on the same device.
     /// This physical identifier allows applications to bind functions to specific physical cursors,
@@ -506,10 +529,26 @@ impl WtiCursor {
     }
 }
 
+/// Bit field that specifies the various optional data items available in event packets.
+/// The event packet field flags can be combined using the bitwise OR operator.
+/// Accepts PK_* bits.
+type WTPKT = u32;
+/// A 32-bit fixed-point arithmetic type, with the radix point between the two words.
+/// Thus, the type contains 16 bits to the left of the radix point and 16 bits to the right of it.
+type FIX32 = [u16; 2];
+
+// Tablet contexts play a central role in the interface;
+// they are the objects that applications use to specify their use of the tablet.
+// Contexts include not only the physical area of the tablet that the application will use,
+// but also information about the type, contents, and delivery method for tablet events,
+// as well as other information. Tablet contexts are somewhat analogous to display contexts
+// in the GDI interface model; they contain context information about a specific application's
+// use of the tablet.
 pub const LOGICAL_CONTEXT_NAMELEN: usize = 80;
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C, align(4))]
 pub struct WtiLogicalContext {
+    // TODO: is the name length correct for 32-bit/ANSI/whatever?
     /// Returns a 40 character array (=80 bytes) containing the default name in UTF-16.
     /// The name may occupy 0-39 characters; the remainder of the array is padded with zeroes.
     pub name: [u8; LOGICAL_CONTEXT_NAMELEN],
@@ -518,22 +557,24 @@ pub struct WtiLogicalContext {
     /// For the default system context, CXO_SYSTEM is required; CXO_PEN, CXO_MARGIN, and CXO_MGNINSIDE are allowed.
     pub options: u32,
     /// Returns the status.
+    /// In the default contexts, this is always 0.
     pub status: u32,
     /// Returns which attributes of the default context are locked.
     pub locks: u32,
     /// Application msg base number.
+    /// In the default contexts, this is always [WT_DEFBASE].
     pub msg_base: u32,
     /// Returns the default device. If this value is -1, then it also known as a "virtual device".
     pub device: u32,
     /// Returns the default context packet report rate, in Hertz.
     pub packet_rate: u32,
     /// Returns which optional data items will be in packets returned from the context.
-    /// For the default digitizing context, this field must at least indicate buttons, x, and y data. ??????
-    pub packet_data: u32,
+    /// For the default digitizing context, this field must at least indicate buttons, x, and y data.
+    pub packet_data: WTPKT,
     /// Returns whether the packet data items will be returned in absolute or relative mode.
-    pub packet_mode: u32,
+    pub packet_mode: WTPKT,
     /// Returns which packet data items can generate motion events in the context.
-    pub move_mask: u32,
+    pub move_mask: WTPKT,
     /// Returns the buttons for which button press events will be processed in the context.
     /// The default context must at least select button press events for one button.
     pub btn_dn_mask: u32,
@@ -564,24 +605,31 @@ pub struct WtiLogicalContext {
     /// Extent of the context's output coordinate space in context output coordinates. (Z)
     pub out_ext_z: i32,
     /// Relative-mode sensitivity factor. (X)
-    pub out_sens_x: i32,
+    /// Is a [FIX32].
+    pub sens_x: i32,
     /// Relative-mode sensitivity factor. (Y)
-    pub out_sens_y: i32,
+    /// Is a [FIX32].
+    pub sens_y: i32,
     /// Relative-mode sensitivity factor. (Z)
-    pub out_sens_z: i32,
+    /// Is a [FIX32].
+    pub sens_z: i32,
     /// Returns the default system cursor tracking mode.
     pub sys_mode: i32,
     /// Returns the current screen display origin in pixels. (X)
+    /// In the default contexts, this is always 0.
     pub sys_org_x: i32,
     /// Returns the current screen display origin in pixels. (Y)
+    /// In the default contexts, this is always 0.
     pub sys_org_y: i32,
     /// Returns the current screen display size in pixels. (X)
     pub sys_ext_x: i32,
     /// Returns the current screen display size in pixels. (Y)
     pub sys_ext_y: i32,
     /// Returns the system cursor relative-mode sensitivity factor. (X)
+    /// Is a [FIX32].
     pub sys_sens_x: i32,
     /// Returns the system cursor relative-mode sensitivity factor. (Y)
+    /// Is a [FIX32].
     pub sys_sens_y: i32,
 }
 impl WtiLogicalContext {
@@ -622,10 +670,13 @@ impl WtiLogicalContext {
                 | PK_X
                 | PK_Y
                 | PK_Z
-                | PK_NORMAL_PRESSURE
-                | PK_TANGENT_PRESSURE
-                | PK_ORIENTATION
-                | PK_ROTATION,
+                | PK_NORMAL_PRESSURE,
+                // TODO: add support for tangential pressure
+                // TODO: add support for pen orientation
+                // TODO: add support for pen rotation
+                // | PK_TANGENT_PRESSURE
+                // | PK_ORIENTATION
+                // | PK_ROTATION,
             packet_mode: 0,
             move_mask: PK_CONTEXT
                 | PK_STATUS
@@ -637,10 +688,10 @@ impl WtiLogicalContext {
                 | PK_X
                 | PK_Y
                 | PK_Z
-                | PK_NORMAL_PRESSURE
-                | PK_TANGENT_PRESSURE
-                | PK_ORIENTATION
-                | PK_ROTATION,
+                | PK_NORMAL_PRESSURE,
+                // | PK_TANGENT_PRESSURE
+                // | PK_ORIENTATION
+                // | PK_ROTATION,
             btn_dn_mask: 0xFFFFFFFF,
             btn_up_mask: 0xFFFFFFFF,
             in_org_x: 0,
@@ -655,9 +706,9 @@ impl WtiLogicalContext {
             out_ext_x: 1024,
             out_ext_y: 1024,
             out_ext_z: 1024,
-            out_sens_x: 0x00010000,
-            out_sens_y: 0x00010000,
-            out_sens_z: 0x00010000,
+            sens_x: 0x00010000,
+            sens_y: 0x00010000,
+            sens_z: 0x00010000,
             sys_mode: 0,
             sys_org_x: 0,
             sys_org_y: 0,
@@ -696,9 +747,9 @@ impl WtiLogicalContext {
                 22 => info_write(&self.out_ext_x, lp_output),
                 23 => info_write(&self.out_ext_y, lp_output),
                 24 => info_write(&self.out_ext_z, lp_output),
-                25 => info_write(&self.out_sens_x, lp_output),
-                26 => info_write(&self.out_sens_y, lp_output),
-                27 => info_write(&self.out_sens_z, lp_output),
+                25 => info_write(&self.sens_x, lp_output),
+                26 => info_write(&self.sens_y, lp_output),
+                27 => info_write(&self.sens_z, lp_output),
                 28 => info_write(&self.sys_mode, lp_output),
                 29 => info_write(&self.sys_org_x, lp_output),
                 30 => info_write(&self.sys_org_y, lp_output),
@@ -728,6 +779,7 @@ pub struct Axis {
     /// [TU_NONE], [TU_INCHES], [TU_CENTIMETERS], [TU_CIRCLE]
     pub units: u32,
     /// Is a fixed-point number giving the number of data item increments per physical unit.
+    /// Is a [FIX32].
     pub resolution: u32,
 }
 impl Axis {
@@ -791,7 +843,7 @@ pub struct Packet {
     pub rotation: Rotation,
 }
 impl Packet {
-    // TODO: make mask a bitfield (PK_CONTEXT and stuff too)
+    // TODO: better code?
     pub fn write(&self, start_ptr: *mut c_void, mask: u32) -> u32 {
         let mut ptr = start_ptr;
         if mask & PK_CONTEXT > 0 {
@@ -933,3 +985,8 @@ impl WindowMessage {
         }
     }
 }
+
+// TODO: Tablet Managers
+// The interface provides functions for tablet management. An application can become a tablet manager by opening a tablet manager handle. This handle allows the manager access to special functions. These management functions allow the application to arrange, overlap, and modify tablet contexts. Managers may also perform other functions, such as changing default values used by applications, changing ergonomic, preference, and configuration settings, controlling tablet behavior with non-tablet aware applications, modifying user dialogs, and recording and playing back tablet packets. Opening a manager handle requires a window handle. The window becomes a manager window and receives window messages about interface and context activity.
+
+
