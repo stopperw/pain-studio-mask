@@ -624,12 +624,17 @@ impl Context {
         self.serial += 1;
         packet.context = self.handle as u32;
         packet.serial = self.serial as u32;
-        packet.orientation.altitude = 900;
+        // packet.orientation.altitude = 900;
+        // TODO: if relative mode, self.time = Duration::new();
         packet.time = self.time.elapsed().as_millis() as u32;
         debug!("wtpacket: {:?}", packet);
         // limiting by queue size
         let queue_size = self.queue_size.max(1) as isize;
-        for _overflow in 0..((self.packets.len() as isize) - queue_size + 1) {
+        let overflow_size = (self.packets.len() as isize) - queue_size + 1;
+        // if overflow_size > 0 {
+        //     debug!("packet overflow: {}", overflow_size);
+        // }
+        for _overflow in 0..overflow_size {
             self.packets.pop_front();
         }
         self.packets.push_back(packet);
