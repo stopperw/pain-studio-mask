@@ -532,7 +532,7 @@ impl WtiCursor {
 /// Bit field that specifies the various optional data items available in event packets.
 /// The event packet field flags can be combined using the bitwise OR operator.
 /// Accepts PK_* bits.
-type WTPKT = u32;
+pub type WTPKT = u32;
 /// A 32-bit fixed-point arithmetic type, with the radix point between the two words.
 /// Thus, the type contains 16 bits to the left of the radix point and 16 bits to the right of it.
 type FIX32 = [u16; 2];
@@ -566,12 +566,12 @@ pub struct WtiLogicalContext {
     pub msg_base: u32,
     /// Returns the default device. If this value is -1, then it also known as a "virtual device".
     pub device: u32,
-    /// Returns the default context packet report rate, in Hertz.
+    /// Packet report rate, in Hertz.
     pub packet_rate: u32,
-    /// Returns which optional data items will be in packets returned from the context.
+    /// Which optional data items will be in packets returned from the context.
     /// For the default digitizing context, this field must at least indicate buttons, x, and y data.
     pub packet_data: WTPKT,
-    /// Returns whether the packet data items will be returned in absolute or relative mode.
+    /// Whether the packet data items will be returned in absolute or relative mode.
     pub packet_mode: WTPKT,
     /// Returns which packet data items can generate motion events in the context.
     pub move_mask: WTPKT,
@@ -843,6 +843,25 @@ pub struct Packet {
     pub rotation: Rotation,
 }
 impl Packet {
+    pub fn default(context: u32) -> Packet {
+        Packet {
+            context,
+            status: 0,
+            time: 0,
+            changed: 0,
+            serial: 0,
+            cursor: 0,
+            buttons: 0,
+            x: 0,
+            y: 0,
+            z: 0,
+            normal_pressure: 0,
+            tangential_pressure: 0,
+            orientation: Orientation::default(),
+            rotation: Rotation::default(),
+        }
+    }
+
     // TODO: better code?
     pub fn write(&self, start_ptr: *mut c_void, mask: u32) -> u32 {
         let mut ptr = start_ptr;
@@ -934,7 +953,7 @@ impl Packet {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[repr(C)]
 /// The ORIENTATION data structure specifies the orientation of the cursor with respect to the tablet.
 pub struct Orientation {
@@ -947,7 +966,7 @@ pub struct Orientation {
     pub twist: i32,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[repr(C)]
 /// The ROTATION data structure specifies the Rotation of the cursor with respect to the tablet.
 pub struct Rotation {

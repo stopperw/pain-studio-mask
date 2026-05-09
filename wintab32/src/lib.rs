@@ -1,11 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    ffi::c_void,
-    fs::OpenOptions,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    sync::{LazyLock, Mutex},
-    time::Instant,
+    collections::{HashMap, VecDeque}, ffi::c_void, fs::OpenOptions, io::{Read, Write}, net::{TcpListener, TcpStream}, ops::BitXor, sync::{LazyLock, Mutex}, time::Instant, u32
 };
 
 use color_eyre::eyre::{ContextCompat, bail};
@@ -586,6 +580,7 @@ pub struct Context {
     pub window: ThreadHWND,
     pub logical_context: WtiLogicalContext,
     pub packets: VecDeque<Packet>,
+    pub last_packet: Option<Packet>,
     pub queue_size: usize,
     pub serial: usize,
     pub time: Instant,
@@ -598,6 +593,7 @@ impl Context {
             window: ThreadHWND::default(),
             logical_context: WtiLogicalContext::psm_default(),
             packets: VecDeque::new(),
+            last_packet: None,
             queue_size: 1024,
             serial: 0,
             time: Instant::now(),
@@ -624,10 +620,11 @@ impl Context {
         self.serial += 1;
         packet.context = self.handle as u32;
         packet.serial = self.serial as u32;
-        // packet.orientation.altitude = 900;
-        // TODO: if relative mode, self.time = Duration::new();
         packet.time = self.time.elapsed().as_millis() as u32;
-        debug!("wtpacket: {:?}", packet);
+        packet.changed = self.find_packet_changes(&packet);
+        debug!("Original WinTab packet: {:?}", packet);
+        packet = self.relativize_packet(packet);
+        debug!("Relativized WinTab packet: {:?}", packet);
         // limiting by queue size
         let queue_size = self.queue_size.max(1) as isize;
         let overflow_size = (self.packets.len() as isize) - queue_size + 1;
@@ -638,16 +635,120 @@ impl Context {
             self.packets.pop_front();
         }
         self.packets.push_back(packet);
-        // posting WT_PACKET(serial, ctx_handle)
-        unsafe {
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::Packet.value(self.logical_context.msg_base),
-                WPARAM(self.serial),
-                LPARAM(self.handle as isize),
-            )?
-        };
+        if (self.logical_context.options & CXO_MESSAGES) > 0 {
+            // posting WT_PACKET(serial, ctx_handle)
+            unsafe {
+                PostMessageW(
+                    Some(self.window.0),
+                    WindowMessage::Packet.value(self.logical_context.msg_base),
+                    WPARAM(self.serial),
+                    LPARAM(self.handle as isize),
+                )?
+            };
+        }
         Ok(())
+    }
+
+    fn relativize_packet(&mut self, packet: Packet) -> Packet {
+        if let None = self.last_packet {
+            self.last_packet = Some(packet.clone());
+            return packet;
+        }
+        let last_packet = self.last_packet.as_ref().unwrap().clone();
+
+        let mut relative_packet = packet.clone();
+        if (self.logical_context.packet_mode & PK_STATUS) > 0 {
+            relative_packet.status = packet.status.bitxor(last_packet.status);
+        }
+        if (self.logical_context.packet_mode & PK_TIME) > 0 {
+            let current_time = self.time.elapsed().as_millis() as u32;
+            relative_packet.time = current_time - last_packet.time;
+        }
+        if (self.logical_context.packet_mode & PK_BUTTONS) > 0 {
+            relative_packet.buttons = packet.buttons.bitxor(last_packet.buttons);
+        }
+        if (self.logical_context.packet_mode & PK_X) > 0 {
+            relative_packet.x = packet.x - last_packet.x;
+        }
+        if (self.logical_context.packet_mode & PK_Y) > 0 {
+            relative_packet.y = packet.y - last_packet.y;
+        }
+        if (self.logical_context.packet_mode & PK_Z) > 0 {
+            relative_packet.z = packet.z - last_packet.z;
+        }
+        if (self.logical_context.packet_mode & PK_NORMAL_PRESSURE) > 0 {
+            relative_packet.normal_pressure = packet.normal_pressure - last_packet.normal_pressure;
+        }
+        if (self.logical_context.packet_mode & PK_TANGENT_PRESSURE) > 0 {
+            relative_packet.tangential_pressure = packet.tangential_pressure - last_packet.tangential_pressure;
+        }
+        if (self.logical_context.packet_mode & PK_ORIENTATION) > 0 {
+            relative_packet.orientation = Orientation {
+                azimuth: packet.orientation.azimuth - last_packet.orientation.azimuth,
+                altitude: packet.orientation.altitude - last_packet.orientation.altitude,
+                twist: packet.orientation.twist - last_packet.orientation.twist,
+            };
+        }
+        if (self.logical_context.packet_mode & PK_ROTATION) > 0 {
+            relative_packet.rotation = Rotation {
+                pitch: packet.rotation.pitch - last_packet.rotation.pitch,
+                roll: packet.rotation.roll - last_packet.rotation.roll,
+                yaw: packet.rotation.yaw - last_packet.rotation.yaw,
+            };
+        }
+
+        self.last_packet = Some(packet);
+        relative_packet
+    }
+
+    fn find_packet_changes(&mut self, packet: &Packet) -> WTPKT {
+        let mut changes: WTPKT = 0;
+        if let None = self.last_packet {
+            return WTPKT::MAX;
+        }
+        let last_packet = self.last_packet.as_ref().unwrap().clone();
+
+        if packet.context != last_packet.context {
+            changes |= PK_CONTEXT;
+        }
+        if packet.status != last_packet.status {
+            changes |= PK_STATUS;
+        }
+        // if packet.time != last_packet.time {
+        changes |= PK_TIME;
+        // }
+        if packet.serial != last_packet.serial {
+            changes |= PK_SERIAL_NUMBER;
+        }
+        if packet.cursor != last_packet.cursor {
+            changes |= PK_CURSOR;
+        }
+        if packet.buttons != last_packet.buttons {
+            changes |= PK_BUTTONS;
+        }
+        if packet.x != last_packet.x {
+            changes |= PK_X;
+        }
+        if packet.y != last_packet.y {
+            changes |= PK_Y;
+        }
+        if packet.z != last_packet.z {
+            changes |= PK_Z;
+        }
+        if packet.normal_pressure != last_packet.normal_pressure {
+            changes |= PK_NORMAL_PRESSURE;
+        }
+        if packet.tangential_pressure != last_packet.tangential_pressure {
+            changes |= PK_TANGENT_PRESSURE;
+        }
+        if packet.orientation != last_packet.orientation {
+            changes |= PK_ORIENTATION;
+        }
+        if packet.rotation != last_packet.rotation {
+            changes |= PK_ROTATION;
+        }
+
+        changes
     }
 
     #[deprecated]
@@ -1257,6 +1358,7 @@ pub unsafe fn handle_default_context_info(index: u32, lp_output: *mut c_void, sy
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     state.default_context.options = if system { CXO_SYSTEM } else { 0 };
+    // state.default_context.options |= CXO_MESSAGES;
     unsafe { state.default_context.handle_info(index, lp_output) }
 }
 
