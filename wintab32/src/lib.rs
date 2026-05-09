@@ -991,10 +991,9 @@ pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_e
     }
 
     let mut count = 0;
-    let mut packets = ctx.packets.iter();
     let mut ptr = ptr.clone();
     for _ in 0..max_packets {
-        let packet = match packets.next() {
+        let packet = match ctx.packets.pop_front() {
             Some(x) => x,
             None => break,
         };
