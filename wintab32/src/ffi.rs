@@ -537,6 +537,7 @@ pub type WTPKT = u32;
 /// Thus, the type contains 16 bits to the left of the radix point and 16 bits to the right of it.
 type FIX32 = [u16; 2];
 
+pub const LOGICAL_CONTEXT_NAMELEN: usize = 80;
 // Tablet contexts play a central role in the interface;
 // they are the objects that applications use to specify their use of the tablet.
 // Contexts include not only the physical area of the tablet that the application will use,
@@ -544,7 +545,6 @@ type FIX32 = [u16; 2];
 // as well as other information. Tablet contexts are somewhat analogous to display contexts
 // in the GDI interface model; they contain context information about a specific application's
 // use of the tablet.
-pub const LOGICAL_CONTEXT_NAMELEN: usize = 80;
 #[derive(Debug, Clone)]
 #[repr(C, align(4))]
 pub struct WtiLogicalContext {

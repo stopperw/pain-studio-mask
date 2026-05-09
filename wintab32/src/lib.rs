@@ -175,8 +175,9 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                         time: 0,
                         changed: 0xFFFFFFFF,
                         serial: 0,
-                        cursor: 1, // Wacom compatibility - prevents some applications from assuming the cursor
+                        // Wacom compatibility - cursor=1 prevents some applications from assuming the cursor
                         // doesn't have pressure information; TODO: allow changing through psm.json
+                        cursor: 1,
                         buttons,
                         x,
                         y,
