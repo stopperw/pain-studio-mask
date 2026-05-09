@@ -1,5 +1,13 @@
 use std::{
-    collections::{HashMap, VecDeque}, ffi::c_void, fs::OpenOptions, io::{Read, Write}, net::{TcpListener, TcpStream}, ops::BitXor, sync::{LazyLock, Mutex}, time::Instant, u32
+    collections::{HashMap, VecDeque},
+    ffi::c_void,
+    fs::OpenOptions,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+    ops::BitXor,
+    sync::{LazyLock, Mutex},
+    time::Instant,
+    u32,
 };
 
 use color_eyre::eyre::{ContextCompat, bail};
@@ -10,7 +18,7 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*,
 };
 
-use crate::{config::Config, ffi::*};
+use crate::{config::Config, ffi::*, info_write::bit_position};
 use psm_common::netcode::{COMPATIBLE_VERSION, PSMPacketC2S, PSMPacketS2C};
 
 pub mod config;
@@ -167,7 +175,8 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                         time: 0,
                         changed: 0xFFFFFFFF,
                         serial: 0,
-                        cursor: 0,
+                        cursor: 1, // Wacom compatibility - prevents some applications from assuming the cursor
+                        // doesn't have pressure information; TODO: allow changing through psm.json
                         buttons,
                         x,
                         y,
@@ -665,7 +674,14 @@ impl Context {
             relative_packet.time = current_time - last_packet.time;
         }
         if (self.logical_context.packet_mode & PK_BUTTONS) > 0 {
-            relative_packet.buttons = packet.buttons.bitxor(last_packet.buttons);
+            relative_packet.buttons = 0;
+            relative_packet.buttons |=
+                (bit_position(packet.buttons.bitxor(last_packet.buttons)).saturating_sub(1)) << 16;
+            if packet.buttons > last_packet.buttons {
+                relative_packet.buttons |= TBN_DOWN;
+            } else if packet.buttons < last_packet.buttons {
+                relative_packet.buttons |= TBN_UP;
+            }
         }
         if (self.logical_context.packet_mode & PK_X) > 0 {
             relative_packet.x = packet.x - last_packet.x;
@@ -680,7 +696,8 @@ impl Context {
             relative_packet.normal_pressure = packet.normal_pressure - last_packet.normal_pressure;
         }
         if (self.logical_context.packet_mode & PK_TANGENT_PRESSURE) > 0 {
-            relative_packet.tangential_pressure = packet.tangential_pressure - last_packet.tangential_pressure;
+            relative_packet.tangential_pressure =
+                packet.tangential_pressure - last_packet.tangential_pressure;
         }
         if (self.logical_context.packet_mode & PK_ORIENTATION) > 0 {
             relative_packet.orientation = Orientation {
@@ -971,18 +988,20 @@ pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_e
         ctx.packets.clear();
         return Ok(0);
     }
+
     let mut count = 0;
-    for i in 0..max_packets {
-        let packet = match ctx.packets.pop_front() {
+    let mut packets = ctx.packets.iter();
+    let mut ptr = ptr.clone();
+    for _ in 0..max_packets {
+        let packet = match packets.next() {
             Some(x) => x,
             None => break,
         };
+        let written = packet.write(ptr, ctx.logical_context.packet_data);
         // TODO: FIXME: ooooh scary pointer arithmetics.
-        let packet_size = size_of::<Packet>();
-        packet.write(
-            ptr.wrapping_add(packet_size * (i as usize)),
-            ctx.logical_context.packet_data,
-        );
+        // would you believe me if i said that the line that said "scary pointer arithmetics"
+        // was the line that was responsible for crashes?
+        ptr = ptr.wrapping_add(written as usize);
         count += 1;
     }
 
@@ -1022,6 +1041,7 @@ pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_
         ctx.packets.clear();
         return Ok(0);
     }
+
     let mut count = 0;
     let mut packets = ctx.packets.iter();
     let mut ptr = ptr.clone();
@@ -1030,10 +1050,7 @@ pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_
             Some(x) => x,
             None => break,
         };
-        let written = packet.write(
-            ptr,
-            ctx.logical_context.packet_data,
-        );
+        let written = packet.write(ptr, ctx.logical_context.packet_data);
         // TODO: FIXME: ooooh scary pointer arithmetics.
         // would you believe me if i said that the line that said "scary pointer arithmetics"
         // was the line that was responsible for crashes?
@@ -1063,6 +1080,12 @@ pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Resul
         .contexts
         .get_mut(&ctx_id)
         .wrap_err("context not found")?;
+    if ptr == std::ptr::null_mut() {
+        // flush queue
+        ctx.packets.clear();
+        return Ok(true);
+    }
+
     ctx.packets.retain_mut(|x| x.serial >= serial);
     let packet = match ctx.packets.iter().find(|x| x.serial == serial) {
         Some(x) => x,

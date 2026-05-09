@@ -162,7 +162,7 @@ impl WtiInterface {
             spec_version: 0b00000001_00000001,
             impl_version: 0b00000000_00000001,
             num_devices: 1,
-            num_cursors: 1,
+            num_cursors: 4,
             num_contexts: 16,
             ctx_options: 0,
             ctx_save_size: 0,
@@ -485,13 +485,13 @@ impl WtiCursor {
             button_bits: 32,
             button_names: 0,
             button_map: [0u8; 32],
-            system_button_map: [0u8; 32],
+            system_button_map: [1u8; 32],
             physical_button: 0,
             npbtnmarks: [0, 1],
-            npresponse: response_graph, // [0, 0],
+            npresponse: response_graph,
             tangential_button: 1,
             tpbtnmarks: [0, 1],
-            tpresponse: response_graph, // [0, 0],
+            tpresponse: response_graph,
             physical_id: 0,
             csr_mode: 0,
             minpktdata: 0,
@@ -509,19 +509,19 @@ impl WtiCursor {
                 3 => info_write(&self.packet_data, lp_output),
                 4 => info_write(&self.buttons, lp_output),
                 5 => info_write(&self.button_bits, lp_output),
-                6 => 0, //info_write(&self.button_names, lp_output),
-                7 => 0, //info_write(&self.button_map, lp_output),
-                8 => 0, //info_write(&self.system_button_map, lp_output),
+                6 => info_write(&self.button_names, lp_output),
+                7 => info_write(&self.button_map, lp_output),
+                8 => info_write(&self.system_button_map, lp_output),
                 9 => info_write(&self.physical_button, lp_output),
-                10 => 0, //info_write(&self.npbtnmarks, lp_output),
-                11 => 0, //info_write(&self.npresponse, lp_output),
+                10 => info_write(&self.npbtnmarks, lp_output),
+                11 => info_write(&self.npresponse, lp_output),
                 12 => info_write(&self.tangential_button, lp_output),
-                13 => 0, //info_write(&self.tpbtnmarks, lp_output),
-                14 => 0, //info_write(&self.tpresponse, lp_output),
+                13 => info_write(&self.tpbtnmarks, lp_output),
+                14 => info_write(&self.tpresponse, lp_output),
                 15 => info_write(&self.physical_id, lp_output),
                 16 => info_write(&self.csr_mode, lp_output),
-                17 => 0, //info_write(&self.minpktdata, lp_output),
-                18 => 0, //info_write(&self.min_buttons, lp_output),
+                17 => info_write(&self.minpktdata, lp_output),
+                18 => info_write(&self.min_buttons, lp_output),
                 19 => info_write(&self.capabilities, lp_output),
                 _ => 0,
             }
@@ -793,6 +793,10 @@ impl Axis {
     }
 }
 
+pub const TBN_NONE: u32 = 0;
+pub const TBN_UP: u32 = 1;
+pub const TBN_DOWN: u32 = 2;
+
 #[derive(Debug, Clone)]
 #[repr(C)]
 /// The PACKET data structure is a flexible structure that contains tablet event information. Each of its fields is optional.
@@ -843,25 +847,6 @@ pub struct Packet {
     pub rotation: Rotation,
 }
 impl Packet {
-    pub fn default(context: u32) -> Packet {
-        Packet {
-            context,
-            status: 0,
-            time: 0,
-            changed: 0,
-            serial: 0,
-            cursor: 0,
-            buttons: 0,
-            x: 0,
-            y: 0,
-            z: 0,
-            normal_pressure: 0,
-            tangential_pressure: 0,
-            orientation: Orientation::default(),
-            rotation: Rotation::default(),
-        }
-    }
-
     // TODO: better code?
     pub fn write(&self, start_ptr: *mut c_void, mask: u32) -> u32 {
         let mut ptr = start_ptr;
