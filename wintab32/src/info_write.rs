@@ -24,7 +24,7 @@ pub unsafe fn info_write_array<T>(data: *const T, lp_output: *mut c_void, len: u
         return size;
     }
     unsafe {
-        std::ptr::copy(data, lp_output as *mut _, len);
+        std::ptr::copy(data, lp_output as *mut _, 1);
     }
     size
 }
