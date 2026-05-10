@@ -82,6 +82,8 @@ pub struct TabletPreset {
     pub default_cursor_id: Option<u32>,
     /// Fields that can't be changed by the application.
     pub force: Option<Force>,
+    /// Don't force-absolute coordinate extents (not recommended).
+    pub no_abs: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

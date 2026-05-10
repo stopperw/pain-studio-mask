@@ -15,19 +15,19 @@ pub const WTI_DEFCONTEXT: u32 = 3;
 /// Returns [WtiLogicalContext]
 pub const WTI_DEFSYSCTX: u32 = 4;
 pub const WTI_DEVICES: u32 = 100;
-pub const WTI_DEVICES_MAX: u32 = 200;
+pub const WTI_DEVICES_MAX: u32 = 101;
 pub const WTI_CURSORS: u32 = 200;
-pub const WTI_CURSORS_MAX: u32 = 300;
+pub const WTI_CURSORS_MAX: u32 = 204;
 pub const WTI_EXTENSIONS: u32 = 300;
 pub const WTI_EXTENSIONS_MAX: u32 = 400;
 /// Each contains the current default digitizing logical context for the corresponding device.
 /// Returns [WtiLogicalContext]
 pub const WTI_DDCTXS: u32 = 400;
-pub const WTI_DDCTXS_MAX: u32 = 500;
+pub const WTI_DDCTXS_MAX: u32 = 401;
 /// Each contains the current default system logical context for the corresponding device.
 /// Returns [WtiLogicalContext]
 pub const WTI_DSCTXS: u32 = 500;
-pub const WTI_DSCTXS_MAX: u32 = 600;
+pub const WTI_DSCTXS_MAX: u32 = 501;
 
 pub const WT_DEFBASE: u32 = 0x7FF0;
 

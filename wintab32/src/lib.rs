@@ -412,16 +412,18 @@ impl PSM {
                 context.out_ext_z = self.config.preset.out_ext_z;
             }
         }
-        // context.in_ext_x = context.in_ext_x.abs();
-        // context.in_ext_y = context.in_ext_y.abs();
-        // context.in_ext_z = context.in_ext_z.abs();
-        // context.out_ext_x = context.out_ext_x.abs();
-        // context.out_ext_y = context.out_ext_y.abs();
-        // context.out_ext_z = context.out_ext_z.abs();
-        // context.sys_org_x = context.sys_org_x.abs();
-        // context.sys_org_y = context.sys_org_y.abs();
-        // context.sys_ext_x = context.sys_ext_x.abs();
-        // context.sys_ext_y = context.sys_ext_y.abs();
+        if !self.config.preset.no_abs.unwrap_or(false) {
+            context.in_ext_x = context.in_ext_x.abs();
+            context.in_ext_y = context.in_ext_y.abs();
+            context.in_ext_z = context.in_ext_z.abs();
+            context.out_ext_x = context.out_ext_x.abs();
+            context.out_ext_y = context.out_ext_y.abs();
+            context.out_ext_z = context.out_ext_z.abs();
+            context.sys_org_x = context.sys_org_x.abs();
+            context.sys_org_y = context.sys_org_y.abs();
+            context.sys_ext_x = context.sys_ext_x.abs();
+            context.sys_ext_y = context.sys_ext_y.abs();
+        }
         self.debug_default_context_diff(&context);
         Ok(context)
     }
