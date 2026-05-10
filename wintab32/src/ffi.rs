@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 
 use crate::{
-    info_write::{info_write, info_write_array},
+    info_write::info_write,
     ptr::{copy, copy_unaligned},
 };
 
@@ -176,8 +176,7 @@ impl WtiInterface {
         unsafe {
             match index {
                 0 => info_write(self, lp_output),
-                1 => info_write_array(&self.wintabid, lp_output, INTERFACE_WINTABID_LEN),
-                // 1 => info_write(&self.wintabid, lp_output),
+                1 => info_write(&self.wintabid, lp_output),
                 2 => info_write(&self.spec_version, lp_output),
                 3 => info_write(&self.impl_version, lp_output),
                 4 => info_write(&self.num_devices, lp_output),
@@ -373,7 +372,7 @@ impl WtiDevice {
                 16 => info_write(&self.tangential_pressure, lp_output),
                 17 => info_write(&self.orientation, lp_output),
                 18 => info_write(&self.rotation, lp_output),
-                19 => info_write_array(&self.pnp_id, lp_output, 8),
+                19 => info_write(&self.pnp_id, lp_output),
                 _ => 0,
             }
         }
@@ -505,7 +504,7 @@ impl WtiCursor {
         unsafe {
             match index {
                 0 => info_write(self, lp_output),
-                1 => info_write_array(&self.name, lp_output, DEVICE_NAME_LEN),
+                1 => info_write(&self.name, lp_output),
                 2 => info_write(&self.active, lp_output),
                 3 => info_write(&self.packet_data, lp_output),
                 4 => info_write(&self.buttons, lp_output),
