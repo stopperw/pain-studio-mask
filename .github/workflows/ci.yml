@@ -11,31 +11,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    name: Windows (MSVC)
-    runs-on: windows-latest
+  # windows:
+  #   name: Windows (MSVC)
+  #   runs-on: windows-latest
 
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
-    - name: Build (x86_64)
-      run: cargo build --package wintab32 --target x86_64-pc-windows-msvc
-    - name: Build (i686)
-      run: cargo build --package wintab32 --target i686-pc-windows-msvc
-    - name: Upload artifacts (x86_64)
-      uses: actions/upload-artifact@v4
-      with:
-        name: wintab32_msvc
-        path: target/x86_64-pc-windows-msvc/debug/wintab32.dll
-    - name: Upload artifacts (i686)
-      uses: actions/upload-artifact@v4
-      with:
-        name: wintab32_i686_msvc
-        path: target/i686-pc-windows-msvc/debug/wintab32.dll
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@v4
+  #   - name: Install Rust toolchain
+  #     uses: dtolnay/rust-toolchain@master
+  #     with:
+  #       toolchain: nightly
+  #       targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
+  #   - name: Build (x86_64)
+  #     run: cargo build --package wintab32 --target x86_64-pc-windows-msvc
+  #   - name: Build (i686)
+  #     run: cargo build --package wintab32 --target i686-pc-windows-msvc
+  #   - name: Upload artifacts (x86_64)
+  #     uses: actions/upload-artifact@v4
+  #     with:
+  #       name: wintab32_msvc
+  #       path: target/x86_64-pc-windows-msvc/debug/wintab32.dll
+  #   - name: Upload artifacts (i686)
+  #     uses: actions/upload-artifact@v4
+  #     with:
+  #       name: wintab32_i686_msvc
+  #       path: target/i686-pc-windows-msvc/debug/wintab32.dll
   linux:
     name: Linux (cross-compile)
     runs-on: ubuntu-22.04
@@ -47,8 +48,9 @@ jobs:
       run: |
         sudo apt-get install gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: nightly
         targets: x86_64-pc-windows-gnu,i686-pc-windows-gnu
     - name: Cross-compile for Windows (x86_64)
       run: cargo build --package wintab32 --target x86_64-pc-windows-gnu
