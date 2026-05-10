@@ -795,12 +795,10 @@ impl Context {
         changes
     }
 
-    #[deprecated]
     pub fn context_update(&mut self) -> color_eyre::Result<()> {
         if self.window.0.0.is_null() {
             bail!("update sent without a valid window");
         }
-        self.absolute_ext();
         // posting WT_CTXUPDATE(ctx_handle, status)
         unsafe {
             PostMessageW(
@@ -1362,10 +1360,6 @@ pub unsafe extern "C-unwind" fn WTInfoW(
     n_index: u32,
     lp_output: *mut c_void,
 ) -> u32 {
-    // TODO: THERE IS A SEGFAULT HAPPENING (only in wtinfo.exe as far as i can tell)
-    // THIS info! IS THE FIX (or RUST_LOG=debug)
-    // WHAT
-    // info!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     debug!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     unsafe { WTInfo(w_category, n_index, lp_output, true) }
 }
