@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const COMPATIBLE_VERSION: u32 = 1;
+pub const COMPATIBLE_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -14,11 +14,11 @@ pub enum PSMPacketC2S {
     TabletEvent {
         status: u32,
         buttons: u32,
-        x: u32,
-        y: u32,
-        z: u32,
-        normal_pressure: u32,
-        tangential_pressure: u32,
+        x: i32,
+        y: i32,
+        z: i32,
+        normal_pressure: i32,
+        tangential_pressure: i32,
     },
     /// Is stylus in proximity?
     Proximity {

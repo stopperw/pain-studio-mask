@@ -941,19 +941,19 @@ pub struct Packet {
     pub buttons: u32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the X axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
-    pub x: u32,
+    pub x: i32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the Y axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
-    pub y: u32,
+    pub y: i32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the Z axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
-    pub z: u32,
+    pub z: i32,
     /// In absolute mode, is a UINT containing the adjusted state of the normal pressure.
     /// In relative mode, is an int containing the change in adjusted pressure state.
-    pub normal_pressure: u32,
+    pub normal_pressure: i32,
     /// In absolute mode, is a UINT containing the adjusted state of the tangential pressure.
     /// In relative mode, is an int containing the change in adjusted pressure state.
-    pub tangential_pressure: u32,
+    pub tangential_pressure: i32,
     /// Contains updated cursor orientation information. (see [Orientation])
     pub orientation: Orientation,
     /// Contains updated cursor rotation information. (see [Rotation])
