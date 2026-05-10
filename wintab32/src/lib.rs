@@ -170,7 +170,7 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
                     if let Err(err) = ctx.handle_packet(Packet {
-                        context: ctx.handle as u32,
+                        context: ctx.handle,
                         status,
                         time: 0,
                         changed: 0xFFFFFFFF,
@@ -359,6 +359,26 @@ impl PSM {
         self.device.rotation = self.config.preset.rotation.map(|x| x.into());
         // self.device.packet_data = 0x1ff;
         // self.device.csr_data = 0x1e00;
+        // self.device.orientation = [
+        //     Axis {
+        //         min: 0,
+        //         max: 3600,
+        //         units: TU_CIRCLE,
+        //         resolution: 0x0e10_0000
+        //     },
+        //     Axis {
+        //         min: -900,
+        //         max: 900,
+        //         units: TU_CIRCLE,
+        //         resolution: 0x0e10_0000
+        //     },
+        //     Axis {
+        //         min: 0,
+        //         max: 3600,
+        //         units: TU_CIRCLE,
+        //         resolution: 0x0e10_0000
+        //     },
+        // ];
     }
 
     // Invalid or out-of-range attribute values in the logical context structure
@@ -627,14 +647,20 @@ impl Context {
             );
             return Ok(());
         }
+
         self.serial += 1;
-        packet.context = self.handle as u32;
+        packet.context = self.handle;
         packet.serial = self.serial as u32;
         packet.time = self.time.elapsed().as_millis() as u32;
         packet.changed = self.find_packet_changes(&packet);
+        // This is what Wacom does on tablets without orientation information.
+        // Yet to see any changes caused by this.
+        packet.orientation.altitude = 900;
+
         debug!("Original WinTab packet: {:?}", packet);
         packet = self.relativize_packet(packet);
         debug!("Relativized WinTab packet: {:?}", packet);
+
         // limiting by queue size
         let queue_size = self.queue_size.max(1) as isize;
         let overflow_size = (self.packets.len() as isize) - queue_size + 1;
@@ -879,7 +905,7 @@ pub unsafe extern "C-unwind" fn WTOpenA(
     f_enable: bool,
 ) -> usize {
     debug!("WTOpenA({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
+    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable, false) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn WTOpenW(
@@ -888,7 +914,7 @@ pub unsafe extern "C-unwind" fn WTOpenW(
     f_enable: bool,
 ) -> usize {
     debug!("WTOpenW({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
+    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable, true) }
 }
 // This function establishes an active context on the tablet.
 #[unsafe(no_mangle)]
@@ -899,6 +925,7 @@ pub unsafe extern "C-unwind" fn WTOpen(
     lp_log_ctx: *mut WtiLogicalContext,
     // Specifies whether the new context will immediately begin processing input data.
     f_enable: bool,
+    wide_variant: bool,
 ) -> usize {
     debug!("WTOpen({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
     if lp_log_ctx.is_null() {
@@ -912,10 +939,7 @@ pub unsafe extern "C-unwind" fn WTOpen(
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
 
-    let mut logical_context = WtiLogicalContext::psm_default();
-    unsafe {
-        std::ptr::copy(lp_log_ctx, &mut logical_context, 1);
-    }
+    let mut logical_context = WtiLogicalContext::info_read_logctx(lp_log_ctx as *mut _, wide_variant);
     logical_context = match state.validate_context(&logical_context) {
         Ok(ctx) => ctx,
         Err(err) => {
@@ -965,7 +989,7 @@ pub extern "C-unwind" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut
         "WTPacketsGet({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
     );
-    match packets_get(ctx_id, max_packets, ptr) {
+    let count = match packets_get(ctx_id, max_packets, ptr) {
         Ok(v) => v,
         Err(err) => {
             error!(
@@ -975,7 +999,12 @@ pub extern "C-unwind" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut
             error!("{:?}", err);
             0
         }
-    }
+    };
+    debug!(
+        "packets_get({:#?}, {:#?}, {:#?}) -> {}",
+        ctx_id, max_packets, ptr, count
+    );
+    count
 }
 pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
     let mut state = get_state_or_init().unwrap();
@@ -1017,7 +1046,7 @@ pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mu
         "WTPacketsPeek({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
     );
-    match packets_peek(ctx_id, max_packets, ptr) {
+    let count = match packets_peek(ctx_id, max_packets, ptr) {
         Ok(v) => v,
         Err(err) => {
             error!(
@@ -1027,7 +1056,12 @@ pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mu
             error!("{:?}", err);
             0
         }
-    }
+    };
+    debug!(
+        "packets_peek({:#?}, {:#?}, {:#?}) -> {}",
+        ctx_id, max_packets, ptr, count
+    );
+    count
 }
 pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
     let mut state = get_state_or_init().unwrap();
@@ -1320,7 +1354,7 @@ pub unsafe extern "C-unwind" fn WTInfoA(
     lp_output: *mut c_void,
 ) -> u32 {
     debug!("WTInfoA({}, {}, {:#?});", w_category, n_index, lp_output);
-    unsafe { WTInfo(w_category, n_index, lp_output) }
+    unsafe { WTInfo(w_category, n_index, lp_output, false) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn WTInfoW(
@@ -1333,7 +1367,7 @@ pub unsafe extern "C-unwind" fn WTInfoW(
     // WHAT
     // info!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     debug!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
-    unsafe { WTInfo(w_category, n_index, lp_output) }
+    unsafe { WTInfo(w_category, n_index, lp_output, true) }
 }
 // This function returns global information about the interface in an application-supplied buffer.
 // Different types of information are specified by different index arguments.
@@ -1344,8 +1378,14 @@ pub unsafe extern "C-unwind" fn WTInfo(
     w_category: u32,
     n_index: u32,
     lp_output: *mut c_void,
+    wide_variant: bool,
 ) -> u32 {
-    debug!("WTInfo({}, {}, {:#?});", w_category, n_index, lp_output);
+    debug!("WTInfo({}, {}, {:#?}, {});", w_category, n_index, lp_output, wide_variant);
+
+    if lp_output == std::ptr::null_mut() {
+        error!("WTInfo lp_output is null");
+        return 8192; // same as w_category == 0
+    }
 
     unsafe {
         // Some categories are multiplexed.
@@ -1359,10 +1399,14 @@ pub unsafe extern "C-unwind" fn WTInfo(
             0 => 8192, // should fit anything asked for; wacom driver returns 8790
             WTI_INTERFACE => WtiInterface::psm_default().handle_info(n_index, lp_output),
 
-            WTI_DEFCONTEXT => handle_default_context_info(n_index, lp_output, false),
-            WTI_DEFSYSCTX => handle_default_context_info(n_index, lp_output, true),
-            WTI_DDCTXS..WTI_DDCTXS_MAX => handle_default_context_info(n_index, lp_output, false),
-            WTI_DSCTXS..WTI_DSCTXS_MAX => handle_default_context_info(n_index, lp_output, true),
+            WTI_DEFCONTEXT => handle_default_context_info(n_index, lp_output, false, wide_variant),
+            WTI_DEFSYSCTX => handle_default_context_info(n_index, lp_output, true, wide_variant),
+            WTI_DDCTXS..WTI_DDCTXS_MAX => {
+                handle_default_context_info(n_index, lp_output, false, wide_variant)
+            }
+            WTI_DSCTXS..WTI_DSCTXS_MAX => {
+                handle_default_context_info(n_index, lp_output, true, wide_variant)
+            }
 
             // pass (w_category - WTI_{MULTIPLEXED_CATEGORY}) as the device/cursor/DDCTXS/DSCTXS index
             // when implementing multiple device/cursor support
@@ -1377,12 +1421,21 @@ pub unsafe extern "C-unwind" fn WTInfo(
     }
 }
 
-pub unsafe fn handle_default_context_info(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
+pub unsafe fn handle_default_context_info(
+    index: u32,
+    lp_output: *mut c_void,
+    system: bool,
+    wide_variant: bool,
+) -> u32 {
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     state.default_context.options = if system { CXO_SYSTEM } else { 0 };
     // state.default_context.options |= CXO_MESSAGES;
-    unsafe { state.default_context.handle_info(index, lp_output) }
+    unsafe {
+        state
+            .default_context
+            .handle_info(index, lp_output, wide_variant)
+    }
 }
 
 pub unsafe fn handle_device_info(index: u32, lp_output: *mut c_void) -> u32 {
