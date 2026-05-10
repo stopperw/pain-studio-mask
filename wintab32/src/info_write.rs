@@ -53,3 +53,8 @@ pub fn bit_position(bit: u32) -> u32 {
     }
 }
 
+pub fn map(value: f32, in_start: f32, in_end: f32, out_start: f32, out_end: f32) -> f32 {
+    let slope = 1.0 * (out_end - out_start) / (in_end - in_start);
+    out_start + (slope * (value - in_start))
+}
+

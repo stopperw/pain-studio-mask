@@ -80,6 +80,18 @@ pub struct TabletPreset {
     /// Number from 0-4 determining the reported cursor ID to the application.
     /// Defaults to 1, as that's what Wacom tablets use for pens and what some applications expect.
     pub default_cursor_id: Option<u32>,
+    /// Fields that can't be changed by the application.
+    pub force: Option<Force>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Force {
+    pub out_org_x: Option<bool>,
+    pub out_org_y: Option<bool>,
+    pub out_org_z: Option<bool>,
+    pub out_ext_x: Option<bool>,
+    pub out_ext_y: Option<bool>,
+    pub out_ext_z: Option<bool>,
 }
 
 pub fn find_config() -> color_eyre::Result<Config> {

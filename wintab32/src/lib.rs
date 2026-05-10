@@ -18,7 +18,11 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*,
 };
 
-use crate::{config::Config, ffi::*, info_write::bit_position};
+use crate::{
+    config::Config,
+    ffi::*,
+    info_write::{bit_position, map},
+};
 use psm_common::netcode::{COMPATIBLE_VERSION, PSMPacketC2S, PSMPacketS2C};
 
 pub mod config;
@@ -388,16 +392,36 @@ impl PSM {
         context: &WtiLogicalContext,
     ) -> color_eyre::Result<WtiLogicalContext> {
         let mut context = context.clone();
-        context.in_ext_x = context.in_ext_x.abs();
-        context.in_ext_y = context.in_ext_y.abs();
-        context.in_ext_z = context.in_ext_z.abs();
-        context.out_ext_x = context.out_ext_x.abs();
-        context.out_ext_y = context.out_ext_y.abs();
-        context.out_ext_z = context.out_ext_z.abs();
-        context.sys_org_x = context.sys_org_x.abs();
-        context.sys_org_y = context.sys_org_y.abs();
-        context.sys_ext_x = context.sys_ext_x.abs();
-        context.sys_ext_y = context.sys_ext_y.abs();
+        if let Some(forces) = self.config.preset.force.as_ref() {
+            if forces.out_org_x.unwrap_or(false) {
+                context.out_org_x = self.config.preset.out_org_x;
+            }
+            if forces.out_org_y.unwrap_or(false) {
+                context.out_org_y = self.config.preset.out_org_y;
+            }
+            if forces.out_org_z.unwrap_or(false) {
+                context.out_org_z = self.config.preset.out_org_z;
+            }
+            if forces.out_ext_x.unwrap_or(false) {
+                context.out_ext_x = self.config.preset.out_ext_x;
+            }
+            if forces.out_ext_y.unwrap_or(false) {
+                context.out_ext_y = self.config.preset.out_ext_y;
+            }
+            if forces.out_ext_z.unwrap_or(false) {
+                context.out_ext_z = self.config.preset.out_ext_z;
+            }
+        }
+        // context.in_ext_x = context.in_ext_x.abs();
+        // context.in_ext_y = context.in_ext_y.abs();
+        // context.in_ext_z = context.in_ext_z.abs();
+        // context.out_ext_x = context.out_ext_x.abs();
+        // context.out_ext_y = context.out_ext_y.abs();
+        // context.out_ext_z = context.out_ext_z.abs();
+        // context.sys_org_x = context.sys_org_x.abs();
+        // context.sys_org_y = context.sys_org_y.abs();
+        // context.sys_ext_x = context.sys_ext_x.abs();
+        // context.sys_ext_y = context.sys_ext_y.abs();
         self.debug_default_context_diff(&context);
         Ok(context)
     }
@@ -637,16 +661,34 @@ impl Context {
         if self.window.0.0.is_null() {
             bail!("packet sent without a valid window");
         }
-        if (packet.x as i32) > self.logical_context.out_ext_x
-            || (packet.y as i32) > self.logical_context.out_ext_y
-            || (packet.x as i32) < self.logical_context.out_org_x
-            || (packet.y as i32) < self.logical_context.out_org_y
+
+        if packet.x > (self.logical_context.in_org_x + self.logical_context.in_ext_x)
+            || packet.y > (self.logical_context.in_org_y + self.logical_context.in_ext_y)
+            || packet.x < self.logical_context.in_org_x
+            || packet.y < self.logical_context.in_org_y
         {
             warn!(
                 "Ignoring packet with out of range coordinates! You might need to check your psm.json."
             );
             return Ok(());
         }
+        // Range conversion
+        let x = map(
+            packet.x as f32,
+            self.logical_context.in_org_x as f32,
+            (self.logical_context.in_org_x as f32) + (self.logical_context.in_ext_x as f32),
+            self.logical_context.out_org_x as f32,
+            (self.logical_context.out_org_x as f32) + (self.logical_context.out_ext_x as f32),
+        )
+        .round() as i32;
+        let y = map(
+            packet.y as f32,
+            self.logical_context.in_org_y as f32,
+            (self.logical_context.in_org_y as f32) + (self.logical_context.in_ext_y as f32),
+            self.logical_context.out_org_y as f32,
+            (self.logical_context.out_org_y as f32) + (self.logical_context.out_ext_y as f32),
+        )
+        .round() as i32;
 
         self.serial += 1;
         packet.context = self.handle;
@@ -654,6 +696,8 @@ impl Context {
         packet.time = self.time.elapsed().as_millis() as u32;
         packet.changed = self.find_packet_changes(&packet);
         packet.cursor = self.default_cursor;
+        packet.x = x;
+        packet.y = y;
         // This is what Wacom does on tablets without orientation information.
         // Yet to see any changes caused by this.
         packet.orientation.altitude = 900;
@@ -931,14 +975,13 @@ pub unsafe extern "C-unwind" fn WTOpen(
         error!("WTOpen lp_log_ctx is null");
         return 0;
     }
-    unsafe {
-        debug!("LogContext -> {:#?}", *lp_log_ctx);
-    }
 
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
 
-    let mut logical_context = WtiLogicalContext::info_read_logctx(lp_log_ctx as *mut _, wide_variant);
+    let mut logical_context =
+        WtiLogicalContext::info_read_logctx(lp_log_ctx as *mut _, wide_variant);
+    debug!("Application's LogContext -> {:#?}", logical_context);
     logical_context = match state.validate_context(&logical_context) {
         Ok(ctx) => ctx,
         Err(err) => {
@@ -1376,7 +1419,10 @@ pub unsafe extern "C-unwind" fn WTInfo(
     lp_output: *mut c_void,
     wide_variant: bool,
 ) -> u32 {
-    debug!("WTInfo({}, {}, {:#?}, {});", w_category, n_index, lp_output, wide_variant);
+    debug!(
+        "WTInfo({}, {}, {:#?}, {});",
+        w_category, n_index, lp_output, wide_variant
+    );
 
     if lp_output == std::ptr::null_mut() {
         error!("WTInfo lp_output is null");
