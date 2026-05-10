@@ -175,8 +175,6 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                         time: 0,
                         changed: 0xFFFFFFFF,
                         serial: 0,
-                        // Wacom compatibility - cursor=1 prevents some applications from assuming the cursor
-                        // doesn't have pressure information; TODO: allow changing through psm.json
                         cursor: 1,
                         buttons,
                         x,
@@ -611,6 +609,7 @@ pub struct Context {
     pub logical_context: WtiLogicalContext,
     pub packets: VecDeque<Packet>,
     pub last_packet: Option<Packet>,
+    pub default_cursor: u32,
     pub queue_size: usize,
     pub serial: usize,
     pub time: Instant,
@@ -624,6 +623,7 @@ impl Context {
             logical_context: WtiLogicalContext::psm_default(),
             packets: VecDeque::new(),
             last_packet: None,
+            default_cursor: 1,
             queue_size: 1024,
             serial: 0,
             time: Instant::now(),
@@ -653,6 +653,7 @@ impl Context {
         packet.serial = self.serial as u32;
         packet.time = self.time.elapsed().as_millis() as u32;
         packet.changed = self.find_packet_changes(&packet);
+        packet.cursor = self.default_cursor;
         // This is what Wacom does on tablets without orientation information.
         // Yet to see any changes caused by this.
         packet.orientation.altitude = 900;
@@ -953,6 +954,7 @@ pub unsafe extern "C-unwind" fn WTOpen(
     let mut context = Context::new(handle, f_enable);
     context.window = ThreadHWND(hwnd);
     context.logical_context = logical_context;
+    context.default_cursor = state.config.preset.default_cursor_id.unwrap_or(1);
     if let Err(err) = context.post_open() {
         error!("failed to send the application WT_CTXOPEN: {:?}", err);
     }

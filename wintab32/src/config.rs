@@ -77,6 +77,9 @@ pub struct TabletPreset {
     pub orientation: [Axis; 3],
     /// 3-element array describing the tablet's rotation range and resolution capabilities.
     pub rotation: [Axis; 3],
+    /// Number from 0-4 determining the reported cursor ID to the application.
+    /// Defaults to 1, as that's what Wacom tablets use for pens and what some applications expect.
+    pub default_cursor_id: Option<u32>,
 }
 
 pub fn find_config() -> color_eyre::Result<Config> {
