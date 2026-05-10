@@ -1,5 +1,7 @@
 # Pain Studio Mask
 
+[Getting started](#getting-started) | [Troubleshooting](#troubleshooting)
+
 **PSM fixes graphics tablet support in Wine by emulating the Wintab library.**
 Made for use with **CLIP STUDIO PAINT**, but it will probably work with other apps
 that use Wintab (like SAI).
@@ -42,6 +44,9 @@ If you did everything correctly, the tablet should just work in the app!
 
 If you run your app through a terminal, you should see a `[*] PSM is loaded!` message.
 
+> Note: some apps might not display any PSM messages in the terminal.
+> You can alternatively look at PSM-OTD logs for a "Successfully connected to a PSM server!" message.
+
 If nothing works, check the Troubleshooting section below.
 
 # Troubleshooting
@@ -82,7 +87,7 @@ The config search order is as follows:
 
 ## Failed to bind! PSM WILL NOT WORK. (AddrInUse)
 
-You have another app that already uses PSM or the port 40302.
+You have another app running that currently uses PSM or the port 40302.
 
 If you are using Wine, you can use `wineserver -k` to kill all Wine apps.
 
