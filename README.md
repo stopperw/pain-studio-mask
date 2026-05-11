@@ -11,6 +11,8 @@ compatible with OpenTabletDriver devices.
 
 # Getting started
 
+**These steps work for CSP, however PSM might support the application you use: check the *[App compatibility list](https://github.com/stopperw/pain-studio-mask/issues/14)* first!**
+
 *There is a CSP on Wine install guide available [here](https://github.com/stopperw/pain-studio-mask/blob/main/docs/Install_CSP_on_Wine.md)!*
 
 ## Installing the emulator
