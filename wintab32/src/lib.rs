@@ -4,8 +4,10 @@ use std::{
     fs::OpenOptions,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    ops::BitXor,
     sync::{LazyLock, Mutex},
     time::Instant,
+    u32,
 };
 
 use color_eyre::eyre::{ContextCompat, bail};
@@ -16,7 +18,11 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*,
 };
 
-use crate::{config::Config, ffi::*};
+use crate::{
+    config::Config,
+    ffi::*,
+    info_write::{bit_position, map},
+};
 use psm_common::netcode::{COMPATIBLE_VERSION, PSMPacketC2S, PSMPacketS2C};
 
 pub mod config;
@@ -78,7 +84,8 @@ pub fn main() -> color_eyre::Result<()> {
     Ok(())
 }
 
-pub fn get_state_or_init() -> color_eyre::Result<std::sync::MutexGuard<'static, std::option::Option<PSM>>> {
+pub fn get_state_or_init()
+-> color_eyre::Result<std::sync::MutexGuard<'static, std::option::Option<PSM>>> {
     let no_state = STATE.lock().unwrap().is_none();
     if no_state {
         init()?;
@@ -166,13 +173,13 @@ pub fn handle_client(mut socket: TcpStream) -> color_eyre::Result<()> {
                 let mut state = get_state_or_init().unwrap();
                 let state = state.as_mut().unwrap();
                 for (_, ctx) in state.contexts.iter_mut().filter(|(_, x)| x.enabled) {
-                    if let Err(err) = ctx.send_packet(Packet {
-                        context: ctx.handle as u32,
+                    if let Err(err) = ctx.handle_packet(Packet {
+                        context: ctx.handle,
                         status,
                         time: 0,
                         changed: 0xFFFFFFFF,
                         serial: 0,
-                        cursor: 0,
+                        cursor: 1,
                         buttons,
                         x,
                         y,
@@ -298,6 +305,7 @@ pub struct PSM {
     pub contexts: HashMap<usize, Context>,
     pub counter: usize,
     pub default_context: WtiLogicalContext,
+    // support for multiple devices/cursors?
     pub device: WtiDevice,
     pub cursor: WtiCursor,
     pub config: Config,
@@ -317,26 +325,27 @@ impl PSM {
     }
 
     fn apply_config(&mut self) {
-        self.default_context.status = self.config.preset.status;
+        // TODO: remove unused config.preset options
+        self.default_context.status = 0; // self.config.preset.status;
         self.default_context.packet_rate = self.config.preset.packet_rate;
         self.default_context.packet_mode = self.config.preset.packet_mode;
         self.default_context.move_mask = self.config.preset.move_mask;
         self.default_context.in_org_x = self.config.preset.in_org_x;
         self.default_context.in_org_y = self.config.preset.in_org_y;
         self.default_context.in_org_z = self.config.preset.in_org_z;
-        self.default_context.in_ext_x = self.config.preset.in_ext_x;
-        self.default_context.in_ext_y = self.config.preset.in_ext_y;
-        self.default_context.in_ext_z = self.config.preset.in_ext_z;
+        self.default_context.in_ext_x = self.config.preset.in_ext_x.abs();
+        self.default_context.in_ext_y = self.config.preset.in_ext_y.abs();
+        self.default_context.in_ext_z = self.config.preset.in_ext_z.abs();
         self.default_context.out_org_x = self.config.preset.out_org_x;
         self.default_context.out_org_y = self.config.preset.out_org_y;
         self.default_context.out_org_z = self.config.preset.out_org_z;
-        self.default_context.out_ext_x = self.config.preset.out_ext_x;
-        self.default_context.out_ext_y = self.config.preset.out_ext_y;
-        self.default_context.out_ext_z = self.config.preset.out_ext_z;
-        self.default_context.sys_org_x = self.config.preset.sys_org_x;
-        self.default_context.sys_org_y = self.config.preset.sys_org_y;
-        self.default_context.sys_ext_x = self.config.preset.sys_ext_x;
-        self.default_context.sys_ext_y = self.config.preset.sys_ext_y;
+        self.default_context.out_ext_x = self.config.preset.out_ext_x.abs();
+        self.default_context.out_ext_y = self.config.preset.out_ext_y.abs();
+        self.default_context.out_ext_z = self.config.preset.out_ext_z.abs();
+        self.default_context.sys_org_x = 0; // self.config.preset.sys_org_x;
+        self.default_context.sys_org_y = 0; // self.config.preset.sys_org_y;
+        self.default_context.sys_ext_x = self.config.preset.sys_ext_x.abs();
+        self.default_context.sys_ext_y = self.config.preset.sys_ext_y.abs();
         self.device.hardware = self.config.preset.hardware;
         self.device.packet_rate = self.config.preset.packet_rate;
         self.device.packet_mode = self.config.preset.packet_mode;
@@ -350,6 +359,272 @@ impl PSM {
         self.device.tangential_pressure = self.config.preset.tangential_pressure.into();
         self.device.orientation = self.config.preset.orientation.map(|x| x.into());
         self.device.rotation = self.config.preset.rotation.map(|x| x.into());
+        // self.device.packet_data = 0x1ff;
+        // self.device.csr_data = 0x1e00;
+        // self.device.orientation = [
+        //     Axis {
+        //         min: 0,
+        //         max: 3600,
+        //         units: TU_CIRCLE,
+        //         resolution: 0x0e10_0000
+        //     },
+        //     Axis {
+        //         min: -900,
+        //         max: 900,
+        //         units: TU_CIRCLE,
+        //         resolution: 0x0e10_0000
+        //     },
+        //     Axis {
+        //         min: 0,
+        //         max: 3600,
+        //         units: TU_CIRCLE,
+        //         resolution: 0x0e10_0000
+        //     },
+        // ];
+    }
+
+    // Invalid or out-of-range attribute values in the logical context structure
+    // will either be validated, or cause the open to fail, depending on the attributes involved.
+    // Upon a successful return from the function, the context specification pointed to by lpLogCtx
+    // will contain the validated values.
+    pub fn validate_context(
+        &self,
+        context: &WtiLogicalContext,
+    ) -> color_eyre::Result<WtiLogicalContext> {
+        let mut context = context.clone();
+        if let Some(forces) = self.config.preset.force.as_ref() {
+            if forces.out_org_x.unwrap_or(false) {
+                context.out_org_x = self.config.preset.out_org_x;
+            }
+            if forces.out_org_y.unwrap_or(false) {
+                context.out_org_y = self.config.preset.out_org_y;
+            }
+            if forces.out_org_z.unwrap_or(false) {
+                context.out_org_z = self.config.preset.out_org_z;
+            }
+            if forces.out_ext_x.unwrap_or(false) {
+                context.out_ext_x = self.config.preset.out_ext_x;
+            }
+            if forces.out_ext_y.unwrap_or(false) {
+                context.out_ext_y = self.config.preset.out_ext_y;
+            }
+            if forces.out_ext_z.unwrap_or(false) {
+                context.out_ext_z = self.config.preset.out_ext_z;
+            }
+        }
+        if !self.config.preset.no_abs.unwrap_or(false) {
+            context.in_ext_x = context.in_ext_x.abs();
+            context.in_ext_y = context.in_ext_y.abs();
+            context.in_ext_z = context.in_ext_z.abs();
+            context.out_ext_x = context.out_ext_x.abs();
+            context.out_ext_y = context.out_ext_y.abs();
+            context.out_ext_z = context.out_ext_z.abs();
+            context.sys_org_x = context.sys_org_x.abs();
+            context.sys_org_y = context.sys_org_y.abs();
+            context.sys_ext_x = context.sys_ext_x.abs();
+            context.sys_ext_y = context.sys_ext_y.abs();
+        }
+        self.debug_default_context_diff(&context);
+        Ok(context)
+    }
+
+    fn debug_default_context_diff(&self, context: &WtiLogicalContext) {
+        debug!("Differences between default and application contexts (*new* != default):");
+        if context.options != self.default_context.options {
+            debug!(
+                "options: {} != {}",
+                context.options, self.default_context.options
+            );
+        }
+        if context.status != self.default_context.status {
+            debug!(
+                "status: {} != {}",
+                context.status, self.default_context.status
+            );
+        }
+        if context.locks != self.default_context.locks {
+            debug!("locks: {} != {}", context.locks, self.default_context.locks);
+        }
+        if context.msg_base != self.default_context.msg_base {
+            debug!(
+                "msg_base: {} != {}",
+                context.msg_base, self.default_context.msg_base
+            );
+        }
+        if context.device != self.default_context.device {
+            debug!(
+                "device: {} != {}",
+                context.device, self.default_context.device
+            );
+        }
+        if context.packet_rate != self.default_context.packet_rate {
+            debug!(
+                "packet_rate: {} != {}",
+                context.packet_rate, self.default_context.packet_rate
+            );
+        }
+        if context.packet_data != self.default_context.packet_data {
+            debug!(
+                "packet_data: {} != {}",
+                context.packet_data, self.default_context.packet_data
+            );
+        }
+        if context.packet_mode != self.default_context.packet_mode {
+            debug!(
+                "packet_mode: {} != {}",
+                context.packet_mode, self.default_context.packet_mode
+            );
+        }
+        if context.move_mask != self.default_context.move_mask {
+            debug!(
+                "move_mask: {} != {}",
+                context.move_mask, self.default_context.move_mask
+            );
+        }
+        if context.btn_dn_mask != self.default_context.btn_dn_mask {
+            debug!(
+                "btn_dn_mask: {} != {}",
+                context.btn_dn_mask, self.default_context.btn_dn_mask
+            );
+        }
+        if context.btn_up_mask != self.default_context.btn_up_mask {
+            debug!(
+                "btn_up_mask: {} != {}",
+                context.btn_up_mask, self.default_context.btn_up_mask
+            );
+        }
+        if context.in_org_x != self.default_context.in_org_x {
+            debug!(
+                "in_org_x: {} != {}",
+                context.in_org_x, self.default_context.in_org_x
+            );
+        }
+        if context.in_org_y != self.default_context.in_org_y {
+            debug!(
+                "in_org_y: {} != {}",
+                context.in_org_y, self.default_context.in_org_y
+            );
+        }
+        if context.in_org_z != self.default_context.in_org_z {
+            debug!(
+                "in_org_z: {} != {}",
+                context.in_org_z, self.default_context.in_org_z
+            );
+        }
+        if context.in_ext_x != self.default_context.in_ext_x {
+            debug!(
+                "in_ext_x: {} != {}",
+                context.in_ext_x, self.default_context.in_ext_x
+            );
+        }
+        if context.in_ext_y != self.default_context.in_ext_y {
+            debug!(
+                "in_ext_y: {} != {}",
+                context.in_ext_y, self.default_context.in_ext_y
+            );
+        }
+        if context.in_ext_z != self.default_context.in_ext_z {
+            debug!(
+                "in_ext_z: {} != {}",
+                context.in_ext_z, self.default_context.in_ext_z
+            );
+        }
+        if context.out_org_x != self.default_context.out_org_x {
+            debug!(
+                "out_org_x: {} != {}",
+                context.out_org_x, self.default_context.out_org_x
+            );
+        }
+        if context.out_org_y != self.default_context.out_org_y {
+            debug!(
+                "out_org_y: {} != {}",
+                context.out_org_y, self.default_context.out_org_y
+            );
+        }
+        if context.out_org_z != self.default_context.out_org_z {
+            debug!(
+                "out_org_z: {} != {}",
+                context.out_org_z, self.default_context.out_org_z
+            );
+        }
+        if context.out_ext_x != self.default_context.out_ext_x {
+            debug!(
+                "out_ext_x: {} != {}",
+                context.out_ext_x, self.default_context.out_ext_x
+            );
+        }
+        if context.out_ext_y != self.default_context.out_ext_y {
+            debug!(
+                "out_ext_y: {} != {}",
+                context.out_ext_y, self.default_context.out_ext_y
+            );
+        }
+        if context.out_ext_z != self.default_context.out_ext_z {
+            debug!(
+                "out_ext_z: {} != {}",
+                context.out_ext_z, self.default_context.out_ext_z
+            );
+        }
+        if context.sens_x != self.default_context.sens_x {
+            debug!(
+                "sens_x: {} != {}",
+                context.sens_x, self.default_context.sens_x
+            );
+        }
+        if context.sens_y != self.default_context.sens_y {
+            debug!(
+                "sens_y: {} != {}",
+                context.sens_y, self.default_context.sens_y
+            );
+        }
+        if context.sens_z != self.default_context.sens_z {
+            debug!(
+                "sens_z: {} != {}",
+                context.sens_z, self.default_context.sens_z
+            );
+        }
+        if context.sys_mode != self.default_context.sys_mode {
+            debug!(
+                "sys_mode: {} != {}",
+                context.sys_mode, self.default_context.sys_mode
+            );
+        }
+        if context.sys_org_x != self.default_context.sys_org_x {
+            debug!(
+                "sys_org_x: {} != {}",
+                context.sys_org_x, self.default_context.sys_org_x
+            );
+        }
+        if context.sys_org_y != self.default_context.sys_org_y {
+            debug!(
+                "sys_org_y: {} != {}",
+                context.sys_org_y, self.default_context.sys_org_y
+            );
+        }
+        if context.sys_ext_x != self.default_context.sys_ext_x {
+            debug!(
+                "sys_ext_x: {} != {}",
+                context.sys_ext_x, self.default_context.sys_ext_x
+            );
+        }
+        if context.sys_ext_y != self.default_context.sys_ext_y {
+            debug!(
+                "sys_ext_y: {} != {}",
+                context.sys_ext_y, self.default_context.sys_ext_y
+            );
+        }
+        if context.sys_sens_x != self.default_context.sys_sens_x {
+            debug!(
+                "sys_sens_x: {} != {}",
+                context.sys_sens_x, self.default_context.sys_sens_x
+            );
+        }
+        if context.sys_sens_y != self.default_context.sys_sens_y {
+            debug!(
+                "sys_sens_y: {} != {}",
+                context.sys_sens_y, self.default_context.sys_sens_y
+            );
+        }
     }
 }
 
@@ -359,6 +634,8 @@ pub struct Context {
     pub window: ThreadHWND,
     pub logical_context: WtiLogicalContext,
     pub packets: VecDeque<Packet>,
+    pub last_packet: Option<Packet>,
+    pub default_cursor: u32,
     pub queue_size: usize,
     pub serial: usize,
     pub time: Instant,
@@ -371,55 +648,204 @@ impl Context {
             window: ThreadHWND::default(),
             logical_context: WtiLogicalContext::psm_default(),
             packets: VecDeque::new(),
+            last_packet: None,
+            default_cursor: 1,
             queue_size: 1024,
             serial: 0,
             time: Instant::now(),
         }
     }
 
-    pub fn send_packet(&mut self, mut packet: Packet) -> color_eyre::Result<()> {
+    pub fn handle_packet(&mut self, mut packet: Packet) -> color_eyre::Result<()> {
         if !self.enabled {
             bail!("packet sent when context is disabled");
         }
         if self.window.0.0.is_null() {
             bail!("packet sent without a valid window");
         }
-        if (packet.x as i32) > self.logical_context.out_ext_x
-            || (packet.y as i32) > self.logical_context.out_ext_y
-            || (packet.x as i32) < self.logical_context.out_org_x
-            || (packet.y as i32) < self.logical_context.out_org_y {
-                warn!("Ignoring packet with out of range coordinates! You might need to check your psm.json.");
-                return Ok(());
+
+        if packet.x > (self.logical_context.in_org_x + self.logical_context.in_ext_x)
+            || packet.y > (self.logical_context.in_org_y + self.logical_context.in_ext_y)
+            || packet.x < self.logical_context.in_org_x
+            || packet.y < self.logical_context.in_org_y
+        {
+            warn!(
+                "Ignoring packet with out of range coordinates! You might need to check your psm.json."
+            );
+            return Ok(());
         }
+        // Range conversion
+        let x = map(
+            packet.x as f32,
+            self.logical_context.in_org_x as f32,
+            (self.logical_context.in_org_x as f32) + (self.logical_context.in_ext_x as f32),
+            self.logical_context.out_org_x as f32,
+            (self.logical_context.out_org_x as f32) + (self.logical_context.out_ext_x as f32),
+        )
+        .round() as i32;
+        let y = map(
+            packet.y as f32,
+            self.logical_context.in_org_y as f32,
+            (self.logical_context.in_org_y as f32) + (self.logical_context.in_ext_y as f32),
+            self.logical_context.out_org_y as f32,
+            (self.logical_context.out_org_y as f32) + (self.logical_context.out_ext_y as f32),
+        )
+        .round() as i32;
+
         self.serial += 1;
-        packet.context = self.handle as u32;
+        packet.context = self.handle;
         packet.serial = self.serial as u32;
-        packet.orientation.altitude = 900;
         packet.time = self.time.elapsed().as_millis() as u32;
-        debug!("wtpacket: {:?}", packet);
+        packet.changed = self.find_packet_changes(&packet);
+        packet.cursor = self.default_cursor;
+        packet.x = x;
+        packet.y = y;
+        // This is what Wacom does on tablets without orientation information.
+        // Yet to see any changes caused by this.
+        packet.orientation.altitude = 900;
+
+        debug!("Original WinTab packet: {:?}", packet);
+        packet = self.relativize_packet(packet);
+        debug!("Relativized WinTab packet: {:?}", packet);
+
         // limiting by queue size
         let queue_size = self.queue_size.max(1) as isize;
-        for _overflow in 0..((self.packets.len() as isize) - queue_size + 1) {
+        let overflow_size = (self.packets.len() as isize) - queue_size + 1;
+        // if overflow_size > 0 {
+        //     debug!("packet overflow: {}", overflow_size);
+        // }
+        for _overflow in 0..overflow_size {
             self.packets.pop_front();
         }
         self.packets.push_back(packet);
-        // posting WT_PACKET(serial, ctx_handle)
-        unsafe {
-            PostMessageW(
-                Some(self.window.0),
-                WindowMessage::Packet.value(self.logical_context.msg_base),
-                WPARAM(self.serial),
-                LPARAM(self.handle as isize),
-            )?
-        };
+        if (self.logical_context.options & CXO_MESSAGES) > 0 {
+            // posting WT_PACKET(serial, ctx_handle)
+            unsafe {
+                PostMessageW(
+                    Some(self.window.0),
+                    WindowMessage::Packet.value(self.logical_context.msg_base),
+                    WPARAM(self.serial),
+                    LPARAM(self.handle as isize),
+                )?
+            };
+        }
         Ok(())
+    }
+
+    fn relativize_packet(&mut self, packet: Packet) -> Packet {
+        if let None = self.last_packet {
+            self.last_packet = Some(packet.clone());
+            return packet;
+        }
+        let last_packet = self.last_packet.as_ref().unwrap().clone();
+
+        let mut relative_packet = packet.clone();
+        if (self.logical_context.packet_mode & PK_STATUS) > 0 {
+            relative_packet.status = packet.status.bitxor(last_packet.status);
+        }
+        if (self.logical_context.packet_mode & PK_TIME) > 0 {
+            let current_time = self.time.elapsed().as_millis() as u32;
+            relative_packet.time = current_time - last_packet.time;
+        }
+        if (self.logical_context.packet_mode & PK_BUTTONS) > 0 {
+            relative_packet.buttons = 0;
+            relative_packet.buttons |=
+                (bit_position(packet.buttons.bitxor(last_packet.buttons)).saturating_sub(1)) << 16;
+            if packet.buttons > last_packet.buttons {
+                relative_packet.buttons |= TBN_DOWN;
+            } else if packet.buttons < last_packet.buttons {
+                relative_packet.buttons |= TBN_UP;
+            }
+        }
+        if (self.logical_context.packet_mode & PK_X) > 0 {
+            relative_packet.x = packet.x - last_packet.x;
+        }
+        if (self.logical_context.packet_mode & PK_Y) > 0 {
+            relative_packet.y = packet.y - last_packet.y;
+        }
+        if (self.logical_context.packet_mode & PK_Z) > 0 {
+            relative_packet.z = packet.z - last_packet.z;
+        }
+        if (self.logical_context.packet_mode & PK_NORMAL_PRESSURE) > 0 {
+            relative_packet.normal_pressure = packet.normal_pressure - last_packet.normal_pressure;
+        }
+        if (self.logical_context.packet_mode & PK_TANGENT_PRESSURE) > 0 {
+            relative_packet.tangential_pressure =
+                packet.tangential_pressure - last_packet.tangential_pressure;
+        }
+        if (self.logical_context.packet_mode & PK_ORIENTATION) > 0 {
+            relative_packet.orientation = Orientation {
+                azimuth: packet.orientation.azimuth - last_packet.orientation.azimuth,
+                altitude: packet.orientation.altitude - last_packet.orientation.altitude,
+                twist: packet.orientation.twist - last_packet.orientation.twist,
+            };
+        }
+        if (self.logical_context.packet_mode & PK_ROTATION) > 0 {
+            relative_packet.rotation = Rotation {
+                pitch: packet.rotation.pitch - last_packet.rotation.pitch,
+                roll: packet.rotation.roll - last_packet.rotation.roll,
+                yaw: packet.rotation.yaw - last_packet.rotation.yaw,
+            };
+        }
+
+        self.last_packet = Some(packet);
+        relative_packet
+    }
+
+    fn find_packet_changes(&mut self, packet: &Packet) -> WTPKT {
+        let mut changes: WTPKT = 0;
+        if let None = self.last_packet {
+            return WTPKT::MAX;
+        }
+        let last_packet = self.last_packet.as_ref().unwrap().clone();
+
+        if packet.context != last_packet.context {
+            changes |= PK_CONTEXT;
+        }
+        if packet.status != last_packet.status {
+            changes |= PK_STATUS;
+        }
+        // if packet.time != last_packet.time {
+        changes |= PK_TIME;
+        // }
+        if packet.serial != last_packet.serial {
+            changes |= PK_SERIAL_NUMBER;
+        }
+        if packet.cursor != last_packet.cursor {
+            changes |= PK_CURSOR;
+        }
+        if packet.buttons != last_packet.buttons {
+            changes |= PK_BUTTONS;
+        }
+        if packet.x != last_packet.x {
+            changes |= PK_X;
+        }
+        if packet.y != last_packet.y {
+            changes |= PK_Y;
+        }
+        if packet.z != last_packet.z {
+            changes |= PK_Z;
+        }
+        if packet.normal_pressure != last_packet.normal_pressure {
+            changes |= PK_NORMAL_PRESSURE;
+        }
+        if packet.tangential_pressure != last_packet.tangential_pressure {
+            changes |= PK_TANGENT_PRESSURE;
+        }
+        if packet.orientation != last_packet.orientation {
+            changes |= PK_ORIENTATION;
+        }
+        if packet.rotation != last_packet.rotation {
+            changes |= PK_ROTATION;
+        }
+
+        changes
     }
 
     pub fn context_update(&mut self) -> color_eyre::Result<()> {
         if self.window.0.0.is_null() {
             bail!("update sent without a valid window");
         }
-        self.absolute_ext();
         // posting WT_CTXUPDATE(ctx_handle, status)
         unsafe {
             PostMessageW(
@@ -427,6 +853,38 @@ impl Context {
                 WindowMessage::CtxUpdate.value(self.logical_context.msg_base),
                 WPARAM(self.handle),
                 LPARAM(if self.enabled { CXS_DISABLED } else { 0 } as isize),
+            )?
+        };
+        Ok(())
+    }
+
+    pub fn post_open(&mut self) -> color_eyre::Result<()> {
+        if self.window.0.0.is_null() {
+            bail!("update sent without a valid window");
+        }
+        // posting WT_CTXOPEN(ctx_handle, status)
+        unsafe {
+            PostMessageW(
+                Some(self.window.0),
+                WindowMessage::CtxOpen.value(self.logical_context.msg_base),
+                WPARAM(self.handle),
+                LPARAM(self.logical_context.status as isize),
+            )?
+        };
+        Ok(())
+    }
+
+    pub fn post_close(&mut self) -> color_eyre::Result<()> {
+        if self.window.0.0.is_null() {
+            bail!("update sent without a valid window");
+        }
+        // posting WT_CTXCLOSE(ctx_handle, status)
+        unsafe {
+            PostMessageW(
+                Some(self.window.0),
+                WindowMessage::CtxClose.value(self.logical_context.msg_base),
+                WPARAM(self.handle),
+                LPARAM(self.logical_context.status as isize),
             )?
         };
         Ok(())
@@ -467,9 +925,10 @@ impl Context {
         Ok(())
     }
 
+    #[deprecated(since = "0.1.0", note = "use PSM::validate_context() instead")]
     pub fn absolute_ext(&mut self) {
         self.logical_context.in_ext_x = self.logical_context.in_ext_x.abs();
-        self.logical_context.in_ext_y = self.logical_context.in_ext_y.abs(); 
+        self.logical_context.in_ext_y = self.logical_context.in_ext_y.abs();
         self.logical_context.in_ext_z = self.logical_context.in_ext_z.abs();
         self.logical_context.out_ext_x = self.logical_context.out_ext_x.abs();
         self.logical_context.out_ext_y = self.logical_context.out_ext_y.abs();
@@ -491,7 +950,7 @@ pub unsafe extern "C-unwind" fn WTOpenA(
     f_enable: bool,
 ) -> usize {
     debug!("WTOpenA({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
+    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable, false) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn WTOpenW(
@@ -500,40 +959,57 @@ pub unsafe extern "C-unwind" fn WTOpenW(
     f_enable: bool,
 ) -> usize {
     debug!("WTOpenW({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
-    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable) }
+    unsafe { WTOpen(hwnd, lp_log_ctx, f_enable, true) }
 }
+// This function establishes an active context on the tablet.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn WTOpen(
+    // Identifies the window that owns the tablet context, and receives messages from the context.
     hwnd: HWND,
+    // Points to an application-provided LOGCONTEXT data structure describing the context to be opened.
     lp_log_ctx: *mut WtiLogicalContext,
+    // Specifies whether the new context will immediately begin processing input data.
     f_enable: bool,
+    wide_variant: bool,
 ) -> usize {
     debug!("WTOpen({:#?}, {:#?}, {})", hwnd, lp_log_ctx, f_enable);
     if lp_log_ctx.is_null() {
         error!("WTOpen lp_log_ctx is null");
         return 0;
     }
-    unsafe {
-        debug!("LogContext -> {:#?}", *lp_log_ctx);
-    }
 
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
-    state.counter += 1;
 
+    let mut logical_context =
+        WtiLogicalContext::info_read_logctx(lp_log_ctx as *mut _, wide_variant);
+    debug!("Application's LogContext -> {:#?}", logical_context);
+    logical_context = match state.validate_context(&logical_context) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            error!("application logical context validation failed: {:?}", err);
+            return 0;
+        }
+    };
+
+    // Handle is incremental.
+    state.counter += 1;
     let handle = state.counter;
 
     let mut context = Context::new(handle, f_enable);
     context.window = ThreadHWND(hwnd);
-    unsafe {
-        std::ptr::copy(lp_log_ctx, &mut context.logical_context, 1);
+    context.logical_context = logical_context;
+    context.default_cursor = state.config.preset.default_cursor_id.unwrap_or(1);
+    if let Err(err) = context.post_open() {
+        error!("failed to send the application WT_CTXOPEN: {:?}", err);
     }
-    context.absolute_ext();
     state.contexts.insert(handle, context);
     debug!(
         "new context registered at {} (enabled = {})",
         handle, f_enable
     );
+
+    // TODO(overlap): The newly opened tablet context will be placed on the top of the context overlap order.
 
     handle
 }
@@ -558,7 +1034,7 @@ pub extern "C-unwind" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut
         "WTPacketsGet({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
     );
-    match packets_get(ctx_id, max_packets, ptr) {
+    let count = match packets_get(ctx_id, max_packets, ptr) {
         Ok(v) => v,
         Err(err) => {
             error!(
@@ -568,7 +1044,12 @@ pub extern "C-unwind" fn WTPacketsGet(ctx_id: usize, max_packets: i32, ptr: *mut
             error!("{:?}", err);
             0
         }
-    }
+    };
+    debug!(
+        "packets_get({:#?}, {:#?}, {:#?}) -> {}",
+        ctx_id, max_packets, ptr, count
+    );
+    count
 }
 pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
     let mut state = get_state_or_init().unwrap();
@@ -582,18 +1063,19 @@ pub fn packets_get(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_e
         ctx.packets.clear();
         return Ok(0);
     }
+
     let mut count = 0;
-    for i in 0..max_packets {
+    let mut ptr = ptr.clone();
+    for _ in 0..max_packets {
         let packet = match ctx.packets.pop_front() {
             Some(x) => x,
             None => break,
         };
+        let written = packet.write(ptr, ctx.logical_context.packet_data);
         // TODO: FIXME: ooooh scary pointer arithmetics.
-        let packet_size = size_of::<Packet>();
-        packet.write(
-            ptr.wrapping_add(packet_size * (i as usize)),
-            ctx.logical_context.packet_data,
-        );
+        // would you believe me if i said that the line that said "scary pointer arithmetics"
+        // was the line that was responsible for crashes?
+        ptr = ptr.wrapping_add(written as usize);
         count += 1;
     }
 
@@ -609,7 +1091,7 @@ pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mu
         "WTPacketsPeek({:#?}, {:#?}, {:#?})",
         ctx_id, max_packets, ptr
     );
-    match packets_peek(ctx_id, max_packets, ptr) {
+    let count = match packets_peek(ctx_id, max_packets, ptr) {
         Ok(v) => v,
         Err(err) => {
             error!(
@@ -619,7 +1101,12 @@ pub extern "C-unwind" fn WTPacketsPeek(ctx_id: usize, max_packets: i32, ptr: *mu
             error!("{:?}", err);
             0
         }
-    }
+    };
+    debug!(
+        "packets_peek({:#?}, {:#?}, {:#?}) -> {}",
+        ctx_id, max_packets, ptr, count
+    );
+    count
 }
 pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_eyre::Result<u32> {
     let mut state = get_state_or_init().unwrap();
@@ -633,19 +1120,20 @@ pub fn packets_peek(ctx_id: usize, max_packets: i32, ptr: *mut c_void) -> color_
         ctx.packets.clear();
         return Ok(0);
     }
+
     let mut count = 0;
     let mut packets = ctx.packets.iter();
-    for i in 0..max_packets {
+    let mut ptr = ptr.clone();
+    for _ in 0..max_packets {
         let packet = match packets.next() {
             Some(x) => x,
             None => break,
         };
+        let written = packet.write(ptr, ctx.logical_context.packet_data);
         // TODO: FIXME: ooooh scary pointer arithmetics.
-        let packet_size = size_of::<Packet>();
-        packet.write(
-            ptr.wrapping_add(packet_size * (i as usize)),
-            ctx.logical_context.packet_data,
-        );
+        // would you believe me if i said that the line that said "scary pointer arithmetics"
+        // was the line that was responsible for crashes?
+        ptr = ptr.wrapping_add(written as usize);
         count += 1;
     }
 
@@ -671,6 +1159,12 @@ pub fn packet(ctx_id: usize, serial: u32, ptr: *mut c_void) -> color_eyre::Resul
         .contexts
         .get_mut(&ctx_id)
         .wrap_err("context not found")?;
+    if ptr == std::ptr::null_mut() {
+        // flush queue
+        ctx.packets.clear();
+        return Ok(true);
+    }
+
     ctx.packets.retain_mut(|x| x.serial >= serial);
     let packet = match ctx.packets.iter().find(|x| x.serial == serial) {
         Some(x) => x,
@@ -702,6 +1196,11 @@ pub extern "C-unwind" fn WTClose(ctx_id: usize) -> bool {
 pub fn close(ctx_id: usize) -> color_eyre::Result<bool> {
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
+    let ctx = state
+        .contexts
+        .get_mut(&ctx_id)
+        .wrap_err("context not found")?;
+    ctx.post_close().ok();
     state.contexts.retain(|i, _| *i != ctx_id);
     Ok(true)
 }
@@ -900,7 +1399,7 @@ pub unsafe extern "C-unwind" fn WTInfoA(
     lp_output: *mut c_void,
 ) -> u32 {
     debug!("WTInfoA({}, {}, {:#?});", w_category, n_index, lp_output);
-    unsafe { WTInfo(w_category, n_index, lp_output) }
+    unsafe { WTInfo(w_category, n_index, lp_output, false) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn WTInfoW(
@@ -908,55 +1407,88 @@ pub unsafe extern "C-unwind" fn WTInfoW(
     n_index: u32,
     lp_output: *mut c_void,
 ) -> u32 {
-    // TODO: THERE IS A SEGFAULT HAPPENING (only in wtinfo.exe as far as i can tell)
-    // THIS info! IS THE FIX (or RUST_LOG=debug)
-    // WHAT
-    // info!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
     debug!("WTInfoW({}, {}, {:#?});", w_category, n_index, lp_output);
-    unsafe { WTInfo(w_category, n_index, lp_output) }
+    unsafe { WTInfo(w_category, n_index, lp_output, true) }
 }
+// This function returns global information about the interface in an application-supplied buffer.
+// Different types of information are specified by different index arguments.
+// Applications use this function to receive information about tablet coordinates,
+// physical dimensions, capabilities, and cursor types.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn WTInfo(
     w_category: u32,
     n_index: u32,
     lp_output: *mut c_void,
+    wide_variant: bool,
 ) -> u32 {
-    debug!("WTInfo({}, {}, {:#?});", w_category, n_index, lp_output);
+    debug!(
+        "WTInfo({}, {}, {:#?}, {});",
+        w_category, n_index, lp_output, wide_variant
+    );
+
+    if lp_output == std::ptr::null_mut() {
+        error!("WTInfo lp_output is null");
+        return 8192; // same as w_category == 0
+    }
 
     unsafe {
+        // Some categories are multiplexed.
+        // A single category code represents the first of a group of identically indexed categories,
+        // one for each of a set of similar objects. Multiplexed categories include those for devices
+        // and cursor types. One constructs the category number by adding the defined category code
+        // to a zero-based device or cursor identification number.
         match w_category {
             // If the wCategory argument is zero, the function copies no data to the output buffer,
             // but returns the size in bytes of the buffer necessary to hold the largest complete category.
-            0 => size_of::<WtiLogicalContext>() as u32,
+            0 => 8192, // should fit anything asked for; wacom driver returns 8790
             WTI_INTERFACE => WtiInterface::psm_default().handle_info(n_index, lp_output),
 
-            WTI_DEFCONTEXT => handle_logctx(n_index, lp_output, false),
-            WTI_DEFSYSCTX => handle_logctx(n_index, lp_output, true),
+            WTI_DEFCONTEXT => handle_default_context_info(n_index, lp_output, false, wide_variant),
+            WTI_DEFSYSCTX => handle_default_context_info(n_index, lp_output, true, wide_variant),
+            WTI_DDCTXS..WTI_DDCTXS_MAX => {
+                handle_default_context_info(n_index, lp_output, false, wide_variant)
+            }
+            WTI_DSCTXS..WTI_DSCTXS_MAX => {
+                handle_default_context_info(n_index, lp_output, true, wide_variant)
+            }
+
+            // pass (w_category - WTI_{MULTIPLEXED_CATEGORY}) as the device/cursor/DDCTXS/DSCTXS index
+            // when implementing multiple device/cursor support
+            WTI_DEVICES..WTI_DEVICES_MAX => handle_device_info(n_index, lp_output),
+            WTI_CURSORS..WTI_CURSORS_MAX => handle_cursor_info(n_index, lp_output),
+
+            // TODO: implement
             // WTI_STATUS => todo!(),
-            WTI_DEVICES => handle_device(n_index, lp_output),
-            WTI_CURSORS => handle_cursor(n_index, lp_output),
-            // WTI_EXTENSIONS => todo!(),
-            WTI_DDCTXS => handle_logctx(n_index, lp_output, false),
-            WTI_DSCTXS => handle_logctx(n_index, lp_output, true),
+            // WTI_EXTENSIONS..WTI_EXTENSIONS_MAX => todo!(),
             _ => 0,
         }
     }
 }
 
-pub unsafe fn handle_logctx(index: u32, lp_output: *mut c_void, system: bool) -> u32 {
+pub unsafe fn handle_default_context_info(
+    index: u32,
+    lp_output: *mut c_void,
+    system: bool,
+    wide_variant: bool,
+) -> u32 {
     let mut state = get_state_or_init().unwrap();
     let state = state.as_mut().unwrap();
     state.default_context.options = if system { CXO_SYSTEM } else { 0 };
-    unsafe { state.default_context.handle_info(index, lp_output) }
+    // state.default_context.options |= CXO_MESSAGES;
+    unsafe {
+        state
+            .default_context
+            .handle_info(index, lp_output, wide_variant)
+    }
 }
 
-pub unsafe fn handle_device(index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe fn handle_device_info(index: u32, lp_output: *mut c_void) -> u32 {
     let state = get_state_or_init().unwrap();
     let state = state.as_ref().unwrap();
     unsafe { state.device.handle_info(index, lp_output) }
 }
 
-pub unsafe fn handle_cursor(index: u32, lp_output: *mut c_void) -> u32 {
+pub unsafe fn handle_cursor_info(index: u32, lp_output: *mut c_void) -> u32 {
     let state = get_state_or_init().unwrap();
     let state = state.as_ref().unwrap();
     unsafe { state.cursor.handle_info(index, lp_output) }

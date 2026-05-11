@@ -1,24 +1,33 @@
 use std::ffi::c_void;
 
 use crate::{
-    info_write::{info_write, info_write_array},
-    ptr::copy,
+    info_write::info_write,
+    ptr::{copy, copy_unaligned},
 };
 
 /// Returns [WtiInterface]
 pub const WTI_INTERFACE: u32 = 1;
 pub const WTI_STATUS: u32 = 2;
+/// Contains the current default digitizing logical context.
 /// Returns [WtiLogicalContext]
 pub const WTI_DEFCONTEXT: u32 = 3;
+/// Contains the current default system logical context.
 /// Returns [WtiLogicalContext]
 pub const WTI_DEFSYSCTX: u32 = 4;
 pub const WTI_DEVICES: u32 = 100;
+pub const WTI_DEVICES_MAX: u32 = 101;
 pub const WTI_CURSORS: u32 = 200;
+pub const WTI_CURSORS_MAX: u32 = 204;
 pub const WTI_EXTENSIONS: u32 = 300;
+pub const WTI_EXTENSIONS_MAX: u32 = 400;
+/// Each contains the current default digitizing logical context for the corresponding device.
 /// Returns [WtiLogicalContext]
 pub const WTI_DDCTXS: u32 = 400;
+pub const WTI_DDCTXS_MAX: u32 = 401;
+/// Each contains the current default system logical context for the corresponding device.
 /// Returns [WtiLogicalContext]
 pub const WTI_DSCTXS: u32 = 500;
+pub const WTI_DSCTXS_MAX: u32 = 501;
 
 pub const WT_DEFBASE: u32 = 0x7FF0;
 
@@ -53,11 +62,24 @@ pub const PK_ORIENTATION: u32 = 0x1000;
 pub const PK_ROTATION: u32 = 0x2000;
 
 // Context option values
+// For the default digitizing context, CXO_MARGIN and CXO_MGNINSIDE are allowed.
+// For the default system context, CXO_SYSTEM is required; CXO_PEN, CXO_MARGIN, and CXO_MGNINSIDE are allowed.
+/// Specifies that the context is a system cursor context.
 pub const CXO_SYSTEM: u32 = 0x0001;
+/// Specifies that the context is a Pen Windows context, if Pen Windows is installed.
+/// The context is also a system cursor context; specifying CXO_PEN implies CXO_SYSTEM.
 pub const CXO_PEN: u32 = 0x0002;
+/// Specifies that the context returns WT_PACKET messages to its owner.
 pub const CXO_MESSAGES: u32 = 0x0004;
+/// Specifies that the input context on the tablet will have a margin.
+/// The margin is an area outside the specified input area where events
+/// will be mapped to the edge of the input area.
+/// This feature makes it easier to input points at the edge of the context.
 pub const CXO_MARGIN: u32 = 0x8000;
+/// If the CXO_MARGIN bit is on, specifies that the margin will be inside the specified context.
+/// Thus, scaling will occur from a context slightly smaller than the specified input context to the output coordinate space.
 pub const CXO_MGNINSIDE: u32 = 0x4000;
+/// Specifies that the context returns WT_CSRCHANGE messages to it owner. (added in spec 1.1)
 pub const CXO_CSRMESSAGES: u32 = 0x0008;
 
 // Context status values
@@ -73,24 +95,24 @@ pub const CXL_MARGIN: u32 = 0x0008;
 pub const CXL_SYSOUT: u32 = 0x0010;
 
 // Packet status values
-// Specifies that the cursor is out of the context.
+/// Specifies that the cursor is out of the context.
 pub const TPS_PROXIMITY: u32 = 0x0001;
-// Specifies that the event queue for the context has overflowed.
+/// Specifies that the event queue for the context has overflowed.
 pub const TPS_QUEUE_ERR: u32 = 0x0002;
-// Specifies that the cursor is in the margin of the context.
+/// Specifies that the cursor is in the margin of the context.
 pub const TPS_MARGIN: u32 = 0x0004;
-// Specifies that the cursor is out of the context, but that the context has grabbed input while waiting for a button release event.
+/// Specifies that the cursor is out of the context, but that the context has grabbed input while waiting for a button release event.
 pub const TPS_GRAB: u32 = 0x0008;
-// Specifies that the cursor is in its inverted state. (added in spec 1.1)
+/// Specifies that the cursor is in its inverted state. (added in spec 1.1)
 pub const TPS_INVERT: u32 = 0x0010;
 
 // TODO: make structs more Rust-y and make a custom writer
-// for them, instead of limiting to static sizes.
-// Something like what is done to [Packet],
-// then we can have dynamic names for everything.
+// for them, instead of limiting to static sizes,
+// something like what was done with [Packet].
 
 pub const INTERFACE_WINTABID_LEN: usize = 33; // 16 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub struct WtiInterface {
     /// Returns a copy of the null-terminated tablet hardware identification string in the user buffer.
     /// This string should include make, model, and revision information in user-readable format.
@@ -141,7 +163,7 @@ impl WtiInterface {
             spec_version: 0b00000001_00000001,
             impl_version: 0b00000000_00000001,
             num_devices: 1,
-            num_cursors: 1,
+            num_cursors: 4,
             num_contexts: 16,
             ctx_options: 0,
             ctx_save_size: 0,
@@ -154,8 +176,7 @@ impl WtiInterface {
         unsafe {
             match index {
                 0 => info_write(self, lp_output),
-                1 => info_write_array(&self.wintabid, lp_output, INTERFACE_WINTABID_LEN),
-                // 1 => info_write(&self.wintabid, lp_output),
+                1 => info_write(&self.wintabid, lp_output),
                 2 => info_write(&self.spec_version, lp_output),
                 3 => info_write(&self.impl_version, lp_output),
                 4 => info_write(&self.num_devices, lp_output),
@@ -178,6 +199,7 @@ pub const HWC_PHYSID_CURSORS: u32 = 0x0008;
 
 pub const DEVICE_NAME_LEN: usize = 15; // 7 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub struct WtiDevice {
     /// Returns a displayable null-terminated string describing the device, manufacturer, and revision level.
     pub name: [u8; DEVICE_NAME_LEN],
@@ -193,14 +215,14 @@ pub struct WtiDevice {
     pub first_cursor_type: u32,
     /// Returns the maximum packet report rate in Hertz.
     pub packet_rate: u32,
-    /// (WTPKT) Returns a bit mask indicating which packet data items are always available.
-    pub packet_data: u32,
-    /// (WTPKT) Returns a bit mask indicating which packet data items are physically relative
+    /// Returns a bit mask indicating which packet data items are always available.
+    pub packet_data: WTPKT,
+    /// Returns a bit mask indicating which packet data items are physically relative
     /// (i.e. items for which the hardware can only report change, not absolute measurement).
-    pub packet_mode: u32,
-    /// (WTPKT) Returns a bit mask indicating which packet data items are only available when certain cursors are connected.
+    pub packet_mode: WTPKT,
+    /// Returns a bit mask indicating which packet data items are only available when certain cursors are connected.
     /// The individual cursor descriptions must be consulted to determine which cursors return which data.
-    pub csr_data: u32,
+    pub csr_data: WTPKT,
     /// Size of tablet context margins in tablet native coordinates. (X)
     pub x_margin: i32,
     /// Size of tablet context margins in tablet native coordinates. (Y)
@@ -332,8 +354,6 @@ impl WtiDevice {
         unsafe {
             match index {
                 0 => info_write(self, lp_output),
-                // TODO: replace with non-array version??
-                // 1 => info_write_array(&self.name, lp_output, DEVICES_NAME_LEN),
                 1 => info_write(&self.name, lp_output),
                 2 => info_write(&self.hardware, lp_output),
                 3 => info_write(&self.num_cursor_types, lp_output),
@@ -352,7 +372,7 @@ impl WtiDevice {
                 16 => info_write(&self.tangential_pressure, lp_output),
                 17 => info_write(&self.orientation, lp_output),
                 18 => info_write(&self.rotation, lp_output),
-                19 => info_write_array(&self.pnp_id, lp_output, 8),
+                19 => info_write(&self.pnp_id, lp_output),
                 _ => 0,
             }
         }
@@ -365,13 +385,14 @@ pub const CRC_INVERT: u32 = 0x0004;
 
 pub const CURSOR_NAME_LEN: usize = 15; // 7 symbols * 2 bytes (UTF-16) + 1 byte (\0 termination)
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub struct WtiCursor {
     /// Returns a displayable null-terminated string containing the name of the cursor.
     pub name: [u8; CURSOR_NAME_LEN],
     /// Returns whether the cursor is currently connected. Acts like a bool.
     pub active: u32,
-    /// (WTPKT) Returns a bit mask indicating the packet data items supported when this cursor is connected.
-    pub packet_data: u32,
+    /// Returns a bit mask indicating the packet data items supported when this cursor is connected.
+    pub packet_data: WTPKT,
     /// Returns the number of buttons on this cursor.
     pub buttons: u8,
     /// Returns the number of bits of raw button data returned by the hardware.
@@ -380,6 +401,7 @@ pub struct WtiCursor {
     /// The number of names in the list is the same as the number of buttons on the cursor.
     /// The names are separated by a single zero character; the list is terminated by two zero characters.
     /// Replaced by a single u8 to zero it out.
+    // TODO: this might be very wrong, cuz "the list is terminated by two zero characters."
     pub button_names: u8,
     /// Returns a 32 byte array of logical button numbers, one for each physical button.
     pub button_map: [u8; 32],
@@ -399,6 +421,7 @@ pub struct WtiCursor {
     pub tpbtnmarks: [u32; 2],
     /// Returns an array of UINTs describing the pressure response curve for tangential pressure.
     pub tpresponse: [u32; 256],
+    // Everything below is added in spec 1.1:
     /// Returns a manufacturer-specific physical identifier for the cursor.
     /// This value will distinguish the physical cursor from others on the same device.
     /// This physical identifier allows applications to bind functions to specific physical cursors,
@@ -462,13 +485,13 @@ impl WtiCursor {
             button_bits: 32,
             button_names: 0,
             button_map: [0u8; 32],
-            system_button_map: [0u8; 32],
+            system_button_map: [1u8; 32],
             physical_button: 0,
             npbtnmarks: [0, 1],
-            npresponse: response_graph, // [0, 0],
+            npresponse: response_graph,
             tangential_button: 1,
             tpbtnmarks: [0, 1],
-            tpresponse: response_graph, // [0, 0],
+            tpresponse: response_graph,
             physical_id: 0,
             csr_mode: 0,
             minpktdata: 0,
@@ -481,24 +504,24 @@ impl WtiCursor {
         unsafe {
             match index {
                 0 => info_write(self, lp_output),
-                1 => info_write_array(&self.name, lp_output, DEVICE_NAME_LEN),
+                1 => info_write(&self.name, lp_output),
                 2 => info_write(&self.active, lp_output),
                 3 => info_write(&self.packet_data, lp_output),
                 4 => info_write(&self.buttons, lp_output),
                 5 => info_write(&self.button_bits, lp_output),
-                6 => 0, //info_write(&self.button_names, lp_output),
-                7 => 0, //info_write(&self.button_map, lp_output),
-                8 => 0, //info_write(&self.system_button_map, lp_output),
+                6 => info_write(&self.button_names, lp_output),
+                7 => info_write(&self.button_map, lp_output),
+                8 => info_write(&self.system_button_map, lp_output),
                 9 => info_write(&self.physical_button, lp_output),
-                10 => 0, //info_write(&self.npbtnmarks, lp_output),
-                11 => 0, //info_write(&self.npresponse, lp_output),
+                10 => info_write(&self.npbtnmarks, lp_output),
+                11 => info_write(&self.npresponse, lp_output),
                 12 => info_write(&self.tangential_button, lp_output),
-                13 => 0, //info_write(&self.tpbtnmarks, lp_output),
-                14 => 0, //info_write(&self.tpresponse, lp_output),
+                13 => info_write(&self.tpbtnmarks, lp_output),
+                14 => info_write(&self.tpresponse, lp_output),
                 15 => info_write(&self.physical_id, lp_output),
                 16 => info_write(&self.csr_mode, lp_output),
-                17 => 0, //info_write(&self.minpktdata, lp_output),
-                18 => 0, //info_write(&self.min_buttons, lp_output),
+                17 => info_write(&self.minpktdata, lp_output),
+                18 => info_write(&self.min_buttons, lp_output),
                 19 => info_write(&self.capabilities, lp_output),
                 _ => 0,
             }
@@ -506,34 +529,54 @@ impl WtiCursor {
     }
 }
 
-pub const LOGICAL_CONTEXT_NAMELEN: usize = 80;
-#[derive(Debug)]
+/// Bit field that specifies the various optional data items available in event packets.
+/// The event packet field flags can be combined using the bitwise OR operator.
+/// Accepts PK_* bits.
+pub type WTPKT = u32;
+/// A 32-bit fixed-point arithmetic type, with the radix point between the two words.
+/// Thus, the type contains 16 bits to the left of the radix point and 16 bits to the right of it.
+#[allow(unused)]
+// TODO: switch to FIX32s
+type FIX32 = [u16; 2];
+
+pub const LOGICAL_CONTEXT_NAMELEN_A: usize = 40;
+pub const LOGICAL_CONTEXT_NAMELEN_W: usize = 80;
+// Tablet contexts play a central role in the interface;
+// they are the objects that applications use to specify their use of the tablet.
+// Contexts include not only the physical area of the tablet that the application will use,
+// but also information about the type, contents, and delivery method for tablet events,
+// as well as other information. Tablet contexts are somewhat analogous to display contexts
+// in the GDI interface model; they contain context information about a specific application's
+// use of the tablet.
+#[derive(Debug, Clone)]
 #[repr(C, align(4))]
 pub struct WtiLogicalContext {
-    /// Returns a 40 character array (=80 bytes) containing the default name in UTF-16.
+    /// Returns a 40 character array (=80/40 bytes, depending on function A/W variant) containing the default name in UTF-8/16.
     /// The name may occupy 0-39 characters; the remainder of the array is padded with zeroes.
-    pub name: [u8; LOGICAL_CONTEXT_NAMELEN],
+    pub name: [u8; LOGICAL_CONTEXT_NAMELEN_W],
     /// Returns option flags.
     /// For the default digitizing context, CXO_MARGIN and CXO_MGNINSIDE are allowed.
     /// For the default system context, CXO_SYSTEM is required; CXO_PEN, CXO_MARGIN, and CXO_MGNINSIDE are allowed.
     pub options: u32,
     /// Returns the status.
+    /// In the default contexts, this is always 0.
     pub status: u32,
     /// Returns which attributes of the default context are locked.
     pub locks: u32,
     /// Application msg base number.
+    /// In the default contexts, this is always [WT_DEFBASE].
     pub msg_base: u32,
     /// Returns the default device. If this value is -1, then it also known as a "virtual device".
     pub device: u32,
-    /// Returns the default context packet report rate, in Hertz.
+    /// Packet report rate, in Hertz.
     pub packet_rate: u32,
-    /// Returns which optional data items will be in packets returned from the context.
-    /// For the default digitizing context, this field must at least indicate buttons, x, and y data. ??????
-    pub packet_data: u32,
-    /// Returns whether the packet data items will be returned in absolute or relative mode.
-    pub packet_mode: u32,
+    /// Which optional data items will be in packets returned from the context.
+    /// For the default digitizing context, this field must at least indicate buttons, x, and y data.
+    pub packet_data: WTPKT,
+    /// Whether the packet data items will be returned in absolute or relative mode.
+    pub packet_mode: WTPKT,
     /// Returns which packet data items can generate motion events in the context.
-    pub move_mask: u32,
+    pub move_mask: WTPKT,
     /// Returns the buttons for which button press events will be processed in the context.
     /// The default context must at least select button press events for one button.
     pub btn_dn_mask: u32,
@@ -564,44 +607,52 @@ pub struct WtiLogicalContext {
     /// Extent of the context's output coordinate space in context output coordinates. (Z)
     pub out_ext_z: i32,
     /// Relative-mode sensitivity factor. (X)
-    pub out_sens_x: i32,
+    /// Is a [FIX32].
+    pub sens_x: i32,
     /// Relative-mode sensitivity factor. (Y)
-    pub out_sens_y: i32,
+    /// Is a [FIX32].
+    pub sens_y: i32,
     /// Relative-mode sensitivity factor. (Z)
-    pub out_sens_z: i32,
+    /// Is a [FIX32].
+    pub sens_z: i32,
     /// Returns the default system cursor tracking mode.
     pub sys_mode: i32,
     /// Returns the current screen display origin in pixels. (X)
+    /// In the default contexts, this is always 0.
     pub sys_org_x: i32,
     /// Returns the current screen display origin in pixels. (Y)
+    /// In the default contexts, this is always 0.
     pub sys_org_y: i32,
     /// Returns the current screen display size in pixels. (X)
     pub sys_ext_x: i32,
     /// Returns the current screen display size in pixels. (Y)
     pub sys_ext_y: i32,
     /// Returns the system cursor relative-mode sensitivity factor. (X)
+    /// Is a [FIX32].
     pub sys_sens_x: i32,
     /// Returns the system cursor relative-mode sensitivity factor. (Y)
+    /// Is a [FIX32].
     pub sys_sens_y: i32,
 }
 impl WtiLogicalContext {
     pub fn psm_default() -> Self {
-        let name_string = "LOGCTX".encode_utf16().collect::<Vec<u16>>();
-        let mut name = [0u8; LOGICAL_CONTEXT_NAMELEN];
-        for i in 0..LOGICAL_CONTEXT_NAMELEN {
-            if i % 2 == 1 {
-                continue;
-            }
-            let u16i = i / 2;
-            if name_string.len() <= u16i {
-                break;
-            }
-            name[i] = name_string[u16i] as u8;
-            if i + 1 == name.len() {
-                break;
-            }
-            name[i + 1] = (name_string[u16i] >> 8) as u8;
-        }
+        // let name_string = "LOGCTX".encode_utf16().collect::<Vec<u16>>();
+        // let mut name = [0u8; LOGICAL_CONTEXT_NAMELEN_W];
+        let name = [0u8; LOGICAL_CONTEXT_NAMELEN_W];
+        // for i in 0..LOGICAL_CONTEXT_NAMELEN_W {
+        //     if i % 2 == 1 {
+        //         continue;
+        //     }
+        //     let u16i = i / 2;
+        //     if name_string.len() <= u16i {
+        //         break;
+        //     }
+        //     name[i] = name_string[u16i] as u8;
+        //     if i + 1 == name.len() {
+        //         break;
+        //     }
+        //     name[i + 1] = (name_string[u16i] >> 8) as u8;
+        // }
         // debug!("{:#?}", wintabid);
 
         WtiLogicalContext {
@@ -622,10 +673,13 @@ impl WtiLogicalContext {
                 | PK_X
                 | PK_Y
                 | PK_Z
-                | PK_NORMAL_PRESSURE
-                | PK_TANGENT_PRESSURE
-                | PK_ORIENTATION
-                | PK_ROTATION,
+                | PK_NORMAL_PRESSURE,
+            // TODO: add support for tangential pressure
+            // TODO: add support for pen orientation
+            // TODO: add support for pen rotation
+            // | PK_TANGENT_PRESSURE
+            // | PK_ORIENTATION
+            // | PK_ROTATION,
             packet_mode: 0,
             move_mask: PK_CONTEXT
                 | PK_STATUS
@@ -637,10 +691,10 @@ impl WtiLogicalContext {
                 | PK_X
                 | PK_Y
                 | PK_Z
-                | PK_NORMAL_PRESSURE
-                | PK_TANGENT_PRESSURE
-                | PK_ORIENTATION
-                | PK_ROTATION,
+                | PK_NORMAL_PRESSURE,
+            // | PK_TANGENT_PRESSURE
+            // | PK_ORIENTATION
+            // | PK_ROTATION,
             btn_dn_mask: 0xFFFFFFFF,
             btn_up_mask: 0xFFFFFFFF,
             in_org_x: 0,
@@ -655,9 +709,9 @@ impl WtiLogicalContext {
             out_ext_x: 1024,
             out_ext_y: 1024,
             out_ext_z: 1024,
-            out_sens_x: 0x00010000,
-            out_sens_y: 0x00010000,
-            out_sens_z: 0x00010000,
+            sens_x: 0x00010000,
+            sens_y: 0x00010000,
+            sens_z: 0x00010000,
             sys_mode: 0,
             sys_org_x: 0,
             sys_org_y: 0,
@@ -668,11 +722,24 @@ impl WtiLogicalContext {
         }
     }
 
-    pub unsafe fn handle_info(&self, index: u32, lp_output: *mut c_void) -> u32 {
+    pub unsafe fn handle_info(
+        &self,
+        index: u32,
+        lp_output: *mut c_void,
+        wide_variant: bool,
+    ) -> u32 {
         unsafe {
             match index {
-                0 => info_write(self, lp_output),
-                1 => info_write_array(&self.name, lp_output, LOGICAL_CONTEXT_NAMELEN),
+                0 => self.info_write_logctx(lp_output, wide_variant),
+                1 => {
+                    if wide_variant {
+                        let empty_80 = [0u8; LOGICAL_CONTEXT_NAMELEN_W];
+                        info_write(&empty_80, lp_output)
+                    } else {
+                        let empty_40 = [0u8; LOGICAL_CONTEXT_NAMELEN_A];
+                        info_write(&empty_40, lp_output)
+                    }
+                }
                 2 => info_write(&self.options, lp_output),
                 3 => info_write(&self.status, lp_output),
                 4 => info_write(&self.locks, lp_output),
@@ -696,9 +763,9 @@ impl WtiLogicalContext {
                 22 => info_write(&self.out_ext_x, lp_output),
                 23 => info_write(&self.out_ext_y, lp_output),
                 24 => info_write(&self.out_ext_z, lp_output),
-                25 => info_write(&self.out_sens_x, lp_output),
-                26 => info_write(&self.out_sens_y, lp_output),
-                27 => info_write(&self.out_sens_z, lp_output),
+                25 => info_write(&self.sens_x, lp_output),
+                26 => info_write(&self.sens_y, lp_output),
+                27 => info_write(&self.sens_z, lp_output),
                 28 => info_write(&self.sys_mode, lp_output),
                 29 => info_write(&self.sys_org_x, lp_output),
                 30 => info_write(&self.sys_org_y, lp_output),
@@ -710,6 +777,102 @@ impl WtiLogicalContext {
             }
         }
     }
+
+    fn info_write_logctx(&self, start_ptr: *mut c_void, wide_variant: bool) -> u32 {
+        let mut ptr = start_ptr;
+        unsafe {
+            if wide_variant {
+                let empty_80 = [0u8; LOGICAL_CONTEXT_NAMELEN_W];
+                ptr = ptr.wrapping_add(copy(&empty_80, ptr as *mut _, 1));
+            } else {
+                let empty_40 = [0u8; LOGICAL_CONTEXT_NAMELEN_A];
+                ptr = ptr.wrapping_add(copy(&empty_40, ptr as *mut _, 1));
+            }
+            ptr = ptr.wrapping_add(copy(&self.options, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.status, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.locks, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.msg_base, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.device, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.packet_rate, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.packet_data, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.packet_mode, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.move_mask, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.btn_dn_mask, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.btn_up_mask, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.in_org_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.in_org_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.in_org_z, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.in_ext_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.in_ext_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.in_ext_z, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.out_org_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.out_org_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.out_org_z, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.out_ext_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.out_ext_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.out_ext_z, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sens_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sens_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sens_z, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_mode, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_org_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_org_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_ext_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_ext_y, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_sens_x, ptr as *mut _, 1));
+            ptr = ptr.wrapping_add(copy(&self.sys_sens_y, ptr as *mut _, 1));
+        }
+        (ptr as usize - start_ptr as usize) as u32
+    }
+
+    pub fn info_read_logctx(start_ptr: *mut c_void, wide_variant: bool) -> WtiLogicalContext {
+        let mut ctx = WtiLogicalContext::psm_default();
+        let mut ptr = start_ptr;
+        unsafe {
+            if wide_variant {
+                let mut empty_80 = [0u8; 80];
+                ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut empty_80, 1));
+            } else {
+                let mut empty_40 = [0u8; 40];
+                ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut empty_40, 1));
+            }
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.options,     1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.status,      1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.locks,       1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.msg_base,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.device,      1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.packet_rate, 1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.packet_data, 1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.packet_mode, 1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.move_mask,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.btn_dn_mask, 1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.btn_up_mask, 1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.in_org_x,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.in_org_y,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.in_org_z,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.in_ext_x,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.in_ext_y,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.in_ext_z,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.out_org_x,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.out_org_y,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.out_org_z,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.out_ext_x,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.out_ext_y,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.out_ext_z,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sens_x,      1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sens_y,      1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sens_z,      1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_mode,    1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_org_x,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_org_y,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_ext_x,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_ext_y,   1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_sens_x,  1));
+            ptr = ptr.wrapping_add(copy(ptr as *mut _, &mut ctx.sys_sens_y,  1));
+            let _ = ptr;
+        }
+        ctx
+    }
 }
 
 pub const TU_NONE: u32 = 0;
@@ -718,6 +881,7 @@ pub const TU_CENTIMETERS: u32 = 2;
 pub const TU_CIRCLE: u32 = 3;
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 /// The AXIS data structure defines the range and resolution for many of the packet data items.
 pub struct Axis {
     /// Specifies the minimum value of the data item in the tablet's native coordinates.
@@ -728,6 +892,7 @@ pub struct Axis {
     /// [TU_NONE], [TU_INCHES], [TU_CENTIMETERS], [TU_CIRCLE]
     pub units: u32,
     /// Is a fixed-point number giving the number of data item increments per physical unit.
+    /// Is a [FIX32].
     pub resolution: u32,
 }
 impl Axis {
@@ -741,8 +906,12 @@ impl Axis {
     }
 }
 
-#[derive(Debug, Clone)]
+pub const TBN_NONE: u32 = 0;
+pub const TBN_UP: u32 = 1;
+pub const TBN_DOWN: u32 = 2;
+
 #[repr(C)]
+#[derive(Debug, Clone)]
 /// The PACKET data structure is a flexible structure that contains tablet event information. Each of its fields is optional.
 /// The structure consists of a concatenation of the data items selected in the lcPktData field of the context that generated the packet.
 /// The order of the data items is the same as the order of the corresponding set bits in the field.
@@ -750,7 +919,7 @@ impl Axis {
 /// This implementation just includes all the fields.
 pub struct Packet {
     /// Specifies the context that generated the event.
-    pub context: u32,
+    pub context: usize,
     /// Specifies various status and error conditions. These conditions can be combined by using the bitwise OR operator.
     /// The pkStatus field can be any combination of the status values.
     pub status: u32,
@@ -772,109 +941,109 @@ pub struct Packet {
     pub buttons: u32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the X axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
-    pub x: u32,
+    pub x: i32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the Y axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
-    pub y: u32,
+    pub y: i32,
     /// In absolute mode, is a DWORD containing the scaled cursor location along the Z axis.
     /// In relative mode, is a LONG containing the scaled change in cursor position.
-    pub z: u32,
+    pub z: i32,
     /// In absolute mode, is a UINT containing the adjusted state of the normal pressure.
     /// In relative mode, is an int containing the change in adjusted pressure state.
-    pub normal_pressure: u32,
+    pub normal_pressure: i32,
     /// In absolute mode, is a UINT containing the adjusted state of the tangential pressure.
     /// In relative mode, is an int containing the change in adjusted pressure state.
-    pub tangential_pressure: u32,
+    pub tangential_pressure: i32,
     /// Contains updated cursor orientation information. (see [Orientation])
     pub orientation: Orientation,
     /// Contains updated cursor rotation information. (see [Rotation])
     pub rotation: Rotation,
 }
 impl Packet {
-    // TODO: make mask a bitfield (PK_CONTEXT and stuff too)
+    // TODO: better code?
     pub fn write(&self, start_ptr: *mut c_void, mask: u32) -> u32 {
         let mut ptr = start_ptr;
         if mask & PK_CONTEXT > 0 {
             unsafe {
-                let written = copy(&self.context, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.context, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_STATUS > 0 {
             unsafe {
-                let written = copy(&self.status, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.status, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_TIME > 0 {
             unsafe {
-                let written = copy(&self.time, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.time, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_CHANGED > 0 {
             unsafe {
-                let written = copy(&self.changed, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.changed, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_SERIAL_NUMBER > 0 {
             unsafe {
-                let written = copy(&self.serial, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.serial, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_CURSOR > 0 {
             unsafe {
-                let written = copy(&self.cursor, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.cursor, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_BUTTONS > 0 {
             unsafe {
-                let written = copy(&self.buttons, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.buttons, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_X > 0 {
             unsafe {
-                let written = copy(&self.x, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.x, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_Y > 0 {
             unsafe {
-                let written = copy(&self.y, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.y, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_Z > 0 {
             unsafe {
-                let written = copy(&self.z, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.z, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_NORMAL_PRESSURE > 0 {
             unsafe {
-                let written = copy(&self.normal_pressure, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.normal_pressure, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_TANGENT_PRESSURE > 0 {
             unsafe {
-                let written = copy(&self.tangential_pressure, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.tangential_pressure, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_ORIENTATION > 0 {
             unsafe {
-                let written = copy(&self.orientation, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.orientation, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
         if mask & PK_ROTATION > 0 {
             unsafe {
-                let written = copy(&self.rotation, ptr as *mut _, 1);
+                let written = copy_unaligned(&self.rotation, ptr as *mut _, 1);
                 ptr = ptr.wrapping_add(written);
             }
         }
@@ -882,8 +1051,8 @@ impl Packet {
     }
 }
 
-#[derive(Debug, Default, Clone)]
 #[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 /// The ORIENTATION data structure specifies the orientation of the cursor with respect to the tablet.
 pub struct Orientation {
     /// Specifies the clockwise rotation of the cursor about the z axis through a full circular range.
@@ -895,8 +1064,8 @@ pub struct Orientation {
     pub twist: i32,
 }
 
-#[derive(Debug, Default, Clone)]
 #[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 /// The ROTATION data structure specifies the Rotation of the cursor with respect to the tablet.
 pub struct Rotation {
     /// Specifies the pitch of the cursor.
@@ -933,3 +1102,6 @@ impl WindowMessage {
         }
     }
 }
+
+// TODO: Tablet Managers
+// The interface provides functions for tablet management. An application can become a tablet manager by opening a tablet manager handle. This handle allows the manager access to special functions. These management functions allow the application to arrange, overlap, and modify tablet contexts. Managers may also perform other functions, such as changing default values used by applications, changing ergonomic, preference, and configuration settings, controlling tablet behavior with non-tablet aware applications, modifying user dialogs, and recording and playing back tablet packets. Opening a manager handle requires a window handle. The window becomes a manager window and receives window messages about interface and context activity.
